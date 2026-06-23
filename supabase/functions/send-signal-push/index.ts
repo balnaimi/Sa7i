@@ -36,24 +36,24 @@ Deno.serve(async (request) => {
   if (request.method !== "POST") return jsonResponse({ error: "Method not allowed" }, 405);
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
-  const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
   const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
   const vapidPublicKey = Deno.env.get("VAPID_PUBLIC_KEY");
   const vapidPrivateKey = Deno.env.get("VAPID_PRIVATE_KEY");
   const vapidSubject = Deno.env.get("VAPID_SUBJECT") ?? "mailto:admin@example.com";
 
-  if (!supabaseUrl || !anonKey || !serviceRoleKey || !vapidPublicKey || !vapidPrivateKey) {
+  if (!supabaseUrl || !serviceRoleKey || !vapidPublicKey || !vapidPrivateKey) {
     return jsonResponse({ error: "Missing Supabase or VAPID environment variables" }, 500);
   }
 
   const authHeader = request.headers.get("authorization") ?? "";
-  const userClient = createClient(supabaseUrl, anonKey, {
-    global: { headers: { authorization: authHeader } },
-  });
-  const adminClient = createClient(supabaseUrl, serviceRoleKey);
+  const accessToken = authHeader.replace(/^Bearer\s+/i, "").trim();
+  if (!accessToken) return jsonResponse({ error: "Missing authorization token" }, 401);
 
-  const { data: userData, error: userError } = await userClient.auth.getUser();
-  if (userError || !userData.user) return jsonResponse({ error: "Unauthorized" }, 401);
+  const adminClient = createClient(supabaseUrl, serviceRoleKey);
+  const { data: userData, error: userError } = await adminClient.auth.getUser(accessToken);
+  if (userError || !userData.user) {
+    return jsonResponse({ error: "Unauthorized", details: userError?.message ?? "No user" }, 401);
+  }
 
   const body = await request.json().catch(() => ({ signal_id: null, test: false }));
   const isTest = body.test === true;
