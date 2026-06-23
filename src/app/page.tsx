@@ -6,7 +6,7 @@ import type { Friendship, Profile, WakeSignal, WakeSignalText } from "@/lib/type
 
 const USERNAME_RE = /^[a-zA-Z0-9_]{3,24}$/;
 
-type View = "auth" | "home";
+type View = "auth" | "home" | "settings" | "missed";
 type ToastTone = "ok" | "warn" | "error";
 type Toast = { tone: ToastTone; message: string } | null;
 const EMOJI_REPLIES: WakeSignalText[] = ["✅", "❌"];
@@ -353,6 +353,49 @@ export default function Home() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profile, supabase]);
 
+  useEffect(() => {
+    if (!profile || !selectedFriend) return;
+
+    let cancelled = false;
+
+    async function refreshSelectedFriend() {
+      const { data, error } = await supabase
+        .from("wake_signals")
+        .select("*")
+        .eq("sender_id", selectedFriend!.user.id)
+        .eq("receiver_id", profile!.id)
+        .is("seen_at", null)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (!cancelled && !error) {
+        setLatestIncoming((data as WakeSignal | null) ?? null);
+        await loadMissedSignals(profile!.id);
+      }
+    }
+
+    const interval = window.setInterval(refreshSelectedFriend, 4000);
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible") {
+        void refreshSelectedFriend();
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibility);
+    window.addEventListener("focus", refreshSelectedFriend);
+    void refreshSelectedFriend();
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", handleVisibility);
+      window.removeEventListener("focus", refreshSelectedFriend);
+    };
+  // Mobile browsers can pause websocket updates; poll/open-refresh keeps the friend button current.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profile, selectedFriend, supabase]);
+
   async function handleAuth(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!configured) {
@@ -549,7 +592,7 @@ export default function Home() {
     );
   }
 
-  if (view === "home" && selectedFriend) {
+  if (selectedFriend) {
     const incomingEmoji = latestIncoming && isEmojiReply(latestIncoming.text);
     const buttonText = latestIncoming ? (incomingEmoji ? latestIncoming.text : "صاحي..") : "صاحي ؟";
 
@@ -635,15 +678,26 @@ export default function Home() {
   return (
     <main className="min-h-screen overflow-hidden bg-[radial-gradient(circle_at_top,#134e4a_0%,#0f172a_42%,#020617_100%)] text-white" dir="rtl">
       <div className="mx-auto flex min-h-screen w-full max-w-6xl flex-col px-5 py-6 sm:px-8">
-        <header className="flex items-center justify-between gap-4">
+        <header className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <p className="text-sm font-semibold text-emerald-300">Sa7i / صاحي</p>
             <h1 className="text-3xl font-black tracking-tight sm:text-5xl">زر واحد يكفي</h1>
           </div>
           {profile ? (
-            <button className={buttonClass("ghost")} onClick={signOut}>
-              خروج
-            </button>
+            <div className="flex flex-wrap gap-2">
+              <button className={buttonClass(view === "home" ? "primary" : "ghost")} onClick={() => setView("home")}>
+                الأصدقاء
+              </button>
+              <button className={buttonClass(view === "missed" ? "primary" : "ghost")} onClick={() => setView("missed")}>
+                تنبيهات فائتة {pendingSignalCount > 0 ? `(${pendingSignalCount})` : ""}
+              </button>
+              <button className={buttonClass(view === "settings" ? "primary" : "ghost")} onClick={() => setView("settings")}>
+                الإعدادات
+              </button>
+              <button className={buttonClass("ghost")} onClick={signOut}>
+                خروج
+              </button>
+            </div>
           ) : null}
         </header>
 
@@ -725,15 +779,76 @@ export default function Home() {
                   {busy ? "انتظر..." : mode === "login" ? "دخول" : "إنشاء الحساب"}
                 </button>
               </form>
-
-              <p className="mt-5 text-center text-xs leading-6 text-white/55">
-                النموذج الحالي يستخدم Supabase Auth بكلمة مرور، واسم المستخدم يتحول داخلياً إلى بريد محلي للتجربة.
-              </p>
             </div>
           </section>
-        ) : (
-          <section className="grid flex-1 gap-5 py-8 lg:grid-cols-[360px_1fr]">
-            <aside className="space-y-5">
+        ) : null}
+
+        {view === "home" ? (
+          <section className="flex-1 py-8">
+            <div className="rounded-[2rem] border border-white/10 bg-white/10 p-5 backdrop-blur sm:p-8">
+              <h2 className="mb-2 text-2xl font-black">الأصدقاء</h2>
+              <p className="mb-6 text-white/60">اختر شخص، وبعدها بتفتح صفحة فيها زر واحد فقط.</p>
+              {friends.length === 0 ? (
+                <div className="grid min-h-[320px] place-items-center rounded-[2rem] border border-dashed border-white/15 bg-black/10 p-8 text-center text-white/55">
+                  أول مرة بتكون الصفحة فاضية. أضف شخص من الإعدادات وانتظر قبوله.
+                </div>
+              ) : (
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                  {friends.map((friend) => (
+                    <button
+                      key={friend.friendshipId}
+                      className="rounded-3xl border border-white/10 bg-slate-950/60 p-5 text-right transition hover:-translate-y-1 hover:border-emerald-300/40 hover:bg-slate-900"
+                      onClick={() => chooseFriend(friend)}
+                    >
+                      <p className="text-xl font-black">{friend.label}</p>
+                      <p className="text-sm text-emerald-300">@{friend.user.username}</p>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </section>
+        ) : null}
+
+        {view === "missed" ? (
+          <section className="flex-1 py-8">
+            <div className="rounded-[2rem] border border-white/10 bg-white/10 p-5 backdrop-blur sm:p-8">
+              <div className="mb-6 flex items-center justify-between gap-3">
+                <h2 className="text-2xl font-black">تنبيهات فائتة</h2>
+                <span className="rounded-full bg-amber-300 px-3 py-1 text-xs font-black text-slate-950">
+                  {missedSignals.length}
+                </span>
+              </div>
+              {missedSignals.length === 0 ? (
+                <div className="grid min-h-[320px] place-items-center rounded-[2rem] border border-dashed border-white/15 bg-black/10 p-8 text-center text-white/55">
+                  ما فيه تنبيهات فائتة حالياً.
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {missedSignals.map((signal) => (
+                    <button
+                      key={signal.id}
+                      className="w-full rounded-2xl border border-amber-300/20 bg-amber-300/10 p-4 text-right transition hover:bg-amber-300/15"
+                      onClick={() => openMissedSignal(signal)}
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <p className="font-black">{senderNameForSignal(signal)}</p>
+                          <p className="text-xs text-white/50">{formatSignalDate(signal.created_at)}</p>
+                        </div>
+                        <span className="text-3xl">{signal.text}</span>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </section>
+        ) : null}
+
+        {view === "settings" ? (
+          <section className="grid flex-1 gap-5 py-8 lg:grid-cols-2">
+            <div className="space-y-5">
               <div className="rounded-[2rem] border border-white/10 bg-white/10 p-5 backdrop-blur">
                 <p className="text-sm text-white/60">داخل باسم</p>
                 <h2 className="text-2xl font-black">{profile?.display_name || profile?.username}</h2>
@@ -751,21 +866,7 @@ export default function Home() {
                   >
                     {profile?.invite_code}
                   </button>
-                  <p className="mt-2 text-xs leading-5 text-white/50">أرسل هذا الكود لصديقك عشان يضيفك. لا نستخدم اسم المستخدم للإضافة.</p>
-                </div>
-                <div className="mt-4 grid grid-cols-3 gap-2 text-center text-xs">
-                  <div className="rounded-xl bg-black/20 p-3">
-                    <p className="text-2xl font-black text-emerald-300">{incomingRequests.length}</p>
-                    <p className="text-white/50">واردة</p>
-                  </div>
-                  <div className="rounded-xl bg-black/20 p-3">
-                    <p className="text-2xl font-black text-amber-300">{outgoingRequests.length}</p>
-                    <p className="text-white/50">مرسلة</p>
-                  </div>
-                  <div className="rounded-xl bg-black/20 p-3">
-                    <p className="text-2xl font-black text-sky-300">{pendingSignalCount}</p>
-                    <p className="text-white/50">تنبيهات</p>
-                  </div>
+                  <p className="mt-2 text-xs leading-5 text-white/50">أرسل هذا الكود لصديقك عشان يضيفك.</p>
                 </div>
               </div>
 
@@ -791,7 +892,9 @@ export default function Home() {
                   إرسال طلب
                 </button>
               </form>
+            </div>
 
+            <div className="space-y-5">
               <div className="rounded-[2rem] border border-white/10 bg-white/10 p-5 backdrop-blur">
                 <h3 className="mb-4 text-lg font-black">طلبات واردة</h3>
                 {incomingRequests.length === 0 ? (
@@ -835,86 +938,9 @@ export default function Home() {
                   </div>
                 )}
               </div>
-            </aside>
-
-            <div className="rounded-[2rem] border border-white/10 bg-white/10 p-5 backdrop-blur sm:p-8">
-              {!selectedFriend ? (
-                <div>
-                  {missedSignals.length > 0 ? (
-                    <div className="mb-6 rounded-[2rem] border border-amber-300/25 bg-amber-300/10 p-4">
-                      <div className="mb-3 flex items-center justify-between gap-3">
-                        <h2 className="text-xl font-black text-amber-100">تنبيهات فائتة</h2>
-                        <span className="rounded-full bg-amber-300 px-3 py-1 text-xs font-black text-slate-950">
-                          {missedSignals.length}
-                        </span>
-                      </div>
-                      <div className="space-y-2">
-                        {missedSignals.map((signal) => (
-                          <button
-                            key={signal.id}
-                            className="w-full rounded-2xl bg-black/25 p-4 text-right transition hover:bg-black/35"
-                            onClick={() => openMissedSignal(signal)}
-                          >
-                            <div className="flex items-center justify-between gap-3">
-                              <div>
-                                <p className="font-black">{senderNameForSignal(signal)}</p>
-                                <p className="text-xs text-white/50">{formatSignalDate(signal.created_at)}</p>
-                              </div>
-                              <span className="text-2xl">{signal.text}</span>
-                            </div>
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  ) : null}
-                  <h2 className="mb-2 text-2xl font-black">الأصدقاء</h2>
-                  <p className="mb-6 text-white/60">اختر شخص، وبعدها بتفتح صفحة فيها زر واحد فقط.</p>
-                  {friends.length === 0 ? (
-                    <div className="grid min-h-[320px] place-items-center rounded-[2rem] border border-dashed border-white/15 bg-black/10 p-8 text-center text-white/55">
-                      أول مرة بتكون الصفحة فاضية. أضف شخص وانتظر قبوله.
-                    </div>
-                  ) : (
-                    <div className="grid gap-3 sm:grid-cols-2">
-                      {friends.map((friend) => (
-                        <button
-                          key={friend.friendshipId}
-                          className="rounded-3xl border border-white/10 bg-slate-950/60 p-5 text-right transition hover:-translate-y-1 hover:border-emerald-300/40 hover:bg-slate-900"
-                          onClick={() => chooseFriend(friend)}
-                        >
-                          <p className="text-xl font-black">{friend.label}</p>
-                          <p className="text-sm text-emerald-300">@{friend.user.username}</p>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <div className="grid min-h-[620px] place-items-center">
-                  <button className={buttonClass("ghost")} onClick={() => setSelectedFriend(null)}>
-                    رجوع للأصدقاء
-                  </button>
-
-                  <div className="text-center">
-                    <p className="mb-3 text-white/60">إلى @{selectedFriend.user.username}</p>
-                    <h2 className="mb-10 text-4xl font-black">{selectedFriend.label}</h2>
-                    <button
-                      className="h-56 w-56 rounded-full bg-emerald-400 text-4xl font-black text-slate-950 shadow-[0_0_80px_rgba(52,211,153,0.45)] transition hover:scale-105 active:scale-95 disabled:opacity-60 sm:h-72 sm:w-72 sm:text-5xl"
-                      onClick={() => sendWakeSignal()}
-                      disabled={busy}
-                    >
-                      {latestIncoming ? "صاحي.." : "صاحي ؟"}
-                    </button>
-                    <p className="mx-auto mt-8 max-w-md text-sm leading-7 text-white/55">
-                      {latestIncoming
-                        ? "وصلك تنبيه من هذا الشخص. ردّك الوحيد الآن هو زر صاحي.."
-                        : "اضغط الزر، وبيوصل للطرف الثاني صوت وتنبيه داخل التطبيق."}
-                    </p>
-                  </div>
-                </div>
-              )}
             </div>
           </section>
-        )}
+        ) : null}
       </div>
     </main>
   );
