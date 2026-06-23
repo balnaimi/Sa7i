@@ -524,6 +524,31 @@ export default function Home() {
     }
   }
 
+  async function rejectFriendship(friendship: Friendship) {
+    if (!profile) return;
+    setBusy(true);
+    try {
+      const { error } = await supabase
+        .from("friendships")
+        .delete()
+        .eq("id", friendship.id)
+        .eq("addressee_id", profile.id)
+        .eq("status", "pending");
+      if (error) throw error;
+      await loadEverything(profile.id);
+      notify("رفضت طلب الإضافة.", "warn");
+      setAcceptLabels((labels) => {
+        const next = { ...labels };
+        delete next[friendship.id];
+        return next;
+      });
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "تعذر رفض الطلب.", "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function sendWakeSignal(text?: WakeSignalText) {
     if (!profile || !selectedFriend) return;
     setBusy(true);
@@ -961,7 +986,11 @@ export default function Home() {
                   <div className="space-y-3">
                     {incomingRequests.map((request) => (
                       <div key={request.id} className="rounded-2xl bg-black/20 p-3">
-                        <p className="font-bold">@{request.requester?.username}</p>
+                        <p className="text-xs text-white/50">طلب من</p>
+                        <p className="font-bold">
+                          {request.requester?.display_name || request.requester?.username || "مستخدم"}
+                        </p>
+                        <p className="text-sm text-emerald-300">@{request.requester?.username}</p>
                         <input
                           className="mt-3 w-full rounded-xl border border-white/10 bg-slate-950/70 px-3 py-2 text-sm text-white outline-none ring-emerald-300/50 focus:ring-4"
                           value={acceptLabels[request.id] ?? ""}
@@ -971,13 +1000,22 @@ export default function Home() {
                           placeholder={`سمّه عندك: ${request.requester?.display_name || request.requester?.username || "صديقي"}`}
                           maxLength={40}
                         />
-                        <button
-                          className={`${buttonClass()} mt-3 w-full py-2`}
-                          onClick={() => acceptFriendship(request)}
-                          disabled={busy}
-                        >
-                          قبول
-                        </button>
+                        <div className="mt-3 grid grid-cols-2 gap-2">
+                          <button
+                            className={`${buttonClass()} py-2`}
+                            onClick={() => acceptFriendship(request)}
+                            disabled={busy}
+                          >
+                            قبول
+                          </button>
+                          <button
+                            className={`${buttonClass("danger")} py-2`}
+                            onClick={() => rejectFriendship(request)}
+                            disabled={busy}
+                          >
+                            رفض
+                          </button>
+                        </div>
                       </div>
                     ))}
                   </div>
