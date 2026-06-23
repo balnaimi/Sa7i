@@ -10,14 +10,26 @@ type View = "auth" | "home" | "invites" | "settings" | "missed";
 type ToastTone = "ok" | "warn" | "error";
 type Toast = { tone: ToastTone; message: string } | null;
 type WakeSoundId = "classic" | "soft" | "urgent" | "chime";
+type ThemeId = "emerald" | "blue" | "purple" | "orange";
 const EMOJI_REPLIES: WakeSignalText[] = ["✅", "❌"];
 const WAKE_SOUND_STORAGE_KEY = "sa7i:wake-sound";
+const QUIET_ENABLED_STORAGE_KEY = "sa7i:quiet-enabled";
+const QUIET_START_STORAGE_KEY = "sa7i:quiet-start";
+const QUIET_END_STORAGE_KEY = "sa7i:quiet-end";
+const MUTED_FRIENDS_STORAGE_KEY = "sa7i:muted-friends";
+const THEME_STORAGE_KEY = "sa7i:theme";
 const PUBLIC_VAPID_KEY = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
 const WAKE_SOUND_OPTIONS: { id: WakeSoundId; label: string; description: string }[] = [
   { id: "classic", label: "التنبيه الأساسي", description: "ثلاث نغمات واضحة مثل الحالي." },
   { id: "soft", label: "هادئ", description: "نغمة خفيفة وأقل إزعاجاً." },
   { id: "urgent", label: "قوي", description: "تنبيه أسرع وأوضح إذا تبي شيء يلفت الانتباه." },
   { id: "chime", label: "جرس", description: "صوت جرس قصير بنغمة أعلى." },
+];
+const THEME_OPTIONS: { id: ThemeId; label: string; className: string }[] = [
+  { id: "emerald", label: "أخضر", className: "bg-[radial-gradient(circle_at_top,#134e4a_0%,#0f172a_42%,#020617_100%)]" },
+  { id: "blue", label: "أزرق", className: "bg-[radial-gradient(circle_at_top,#1d4ed8_0%,#0f172a_42%,#020617_100%)]" },
+  { id: "purple", label: "بنفسجي", className: "bg-[radial-gradient(circle_at_top,#6d28d9_0%,#0f172a_42%,#020617_100%)]" },
+  { id: "orange", label: "برتقالي", className: "bg-[radial-gradient(circle_at_top,#c2410c_0%,#0f172a_42%,#020617_100%)]" },
 ];
 
 function isEmojiReply(text: WakeSignalText) {
@@ -28,6 +40,7 @@ type FriendRow = {
   friendshipId: string;
   user: Profile;
   label: string;
+  lastSignal?: WakeSignal;
 };
 
 type MissedSignal = WakeSignal & {
@@ -42,6 +55,42 @@ function formatSignalDate(value: string) {
   const hours = String(date.getHours()).padStart(2, "0");
   const minutes = String(date.getMinutes()).padStart(2, "0");
   return `${day}-${month}-${year} ${hours}:${minutes}`;
+}
+
+function formatRelativeTime(value?: string) {
+  if (!value) return "لا يوجد نشاط";
+  const diffMinutes = Math.max(0, Math.round((Date.now() - new Date(value).getTime()) / 60000));
+  if (diffMinutes < 1) return "الآن";
+  if (diffMinutes < 60) return `قبل ${diffMinutes} د`;
+  const hours = Math.round(diffMinutes / 60);
+  if (hours < 24) return `قبل ${hours} س`;
+  return `قبل ${Math.round(hours / 24)} يوم`;
+}
+
+function minutesFromTime(value: string) {
+  const [hours = "0", minutes = "0"] = value.split(":");
+  return Number(hours) * 60 + Number(minutes);
+}
+
+function isQuietNow(enabled: boolean, start: string, end: string) {
+  if (!enabled) return false;
+  const now = new Date();
+  const current = now.getHours() * 60 + now.getMinutes();
+  const startMinutes = minutesFromTime(start);
+  const endMinutes = minutesFromTime(end);
+  if (startMinutes === endMinutes) return true;
+  if (startMinutes < endMinutes) return current >= startMinutes && current < endMinutes;
+  return current >= startMinutes || current < endMinutes;
+}
+
+function safeJsonArray(value: string | null) {
+  if (!value) return [] as string[];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string") : [];
+  } catch {
+    return [];
+  }
 }
 
 function notificationTextForSignal(senderName: string, text: WakeSignalText) {
@@ -107,6 +156,18 @@ export default function Home() {
   const [friendCode, setFriendCode] = useState("");
   const [friendLabel, setFriendLabel] = useState("");
   const [acceptLabels, setAcceptLabels] = useState<Record<string, string>>({});
+  const [quietEnabled, setQuietEnabled] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return window.localStorage.getItem(QUIET_ENABLED_STORAGE_KEY) === "true";
+  });
+  const [quietStart, setQuietStart] = useState(() => typeof window === "undefined" ? "23:00" : window.localStorage.getItem(QUIET_START_STORAGE_KEY) || "23:00");
+  const [quietEnd, setQuietEnd] = useState(() => typeof window === "undefined" ? "08:00" : window.localStorage.getItem(QUIET_END_STORAGE_KEY) || "08:00");
+  const [mutedFriendIds, setMutedFriendIds] = useState<string[]>(() => typeof window === "undefined" ? [] : safeJsonArray(window.localStorage.getItem(MUTED_FRIENDS_STORAGE_KEY)));
+  const [theme, setTheme] = useState<ThemeId>(() => {
+    if (typeof window === "undefined") return "emerald";
+    const savedTheme = window.localStorage.getItem(THEME_STORAGE_KEY);
+    return THEME_OPTIONS.some((option) => option.id === savedTheme) ? (savedTheme as ThemeId) : "emerald";
+  });
   const [wakeSound, setWakeSound] = useState<WakeSoundId>(() => {
     if (typeof window === "undefined") return "classic";
     const savedSound = window.localStorage.getItem(WAKE_SOUND_STORAGE_KEY);
@@ -120,6 +181,37 @@ export default function Home() {
   function notify(message: string, tone: ToastTone = "ok") {
     setToast({ message, tone });
     window.setTimeout(() => setToast(null), 3800);
+  }
+
+  function vibrate(pattern: number | number[] = 30) {
+    navigator.vibrate?.(pattern);
+  }
+
+  const themeClass = THEME_OPTIONS.find((option) => option.id === theme)?.className ?? THEME_OPTIONS[0].className;
+  const quietActive = isQuietNow(quietEnabled, quietStart, quietEnd);
+
+  async function syncPushPreferences(next?: Partial<{ quietEnabled: boolean; quietStart: string; quietEnd: string; mutedFriendIds: string[] }>) {
+    if (!profile || !("serviceWorker" in navigator)) return;
+    const registration = await navigator.serviceWorker.ready.catch(() => null);
+    const subscription = await registration?.pushManager.getSubscription();
+    if (!subscription) return;
+    const values = {
+      quietEnabled,
+      quietStart,
+      quietEnd,
+      mutedFriendIds,
+      ...next,
+    };
+    await supabase
+      .from("push_subscriptions")
+      .update({
+        quiet_enabled: values.quietEnabled,
+        quiet_start: values.quietStart,
+        quiet_end: values.quietEnd,
+        muted_friend_ids: values.mutedFriendIds,
+      })
+      .eq("endpoint", subscription.endpoint)
+      .eq("profile_id", profile.id);
   }
 
   function playWakeSound(sound: WakeSoundId = wakeSound) {
@@ -159,6 +251,37 @@ export default function Home() {
     window.localStorage.setItem(WAKE_SOUND_STORAGE_KEY, sound);
     playWakeSound(sound);
     notify("تم تغيير صوت التنبيه.");
+  }
+
+  function changeTheme(nextTheme: ThemeId) {
+    setTheme(nextTheme);
+    window.localStorage.setItem(THEME_STORAGE_KEY, nextTheme);
+    notify("تم تغيير لون الواجهة.");
+  }
+
+  function updateQuietHours(next: Partial<{ enabled: boolean; start: string; end: string }>) {
+    const values = {
+      enabled: next.enabled ?? quietEnabled,
+      start: next.start ?? quietStart,
+      end: next.end ?? quietEnd,
+    };
+    setQuietEnabled(values.enabled);
+    setQuietStart(values.start);
+    setQuietEnd(values.end);
+    window.localStorage.setItem(QUIET_ENABLED_STORAGE_KEY, String(values.enabled));
+    window.localStorage.setItem(QUIET_START_STORAGE_KEY, values.start);
+    window.localStorage.setItem(QUIET_END_STORAGE_KEY, values.end);
+    void syncPushPreferences({ quietEnabled: values.enabled, quietStart: values.start, quietEnd: values.end });
+  }
+
+  function toggleMuteFriend(friendId: string) {
+    const next = mutedFriendIds.includes(friendId)
+      ? mutedFriendIds.filter((id) => id !== friendId)
+      : [...mutedFriendIds, friendId];
+    setMutedFriendIds(next);
+    window.localStorage.setItem(MUTED_FRIENDS_STORAGE_KEY, JSON.stringify(next));
+    void syncPushPreferences({ mutedFriendIds: next });
+    notify(next.includes(friendId) ? "تم كتم تنبيهات هذا الصديق على هذا الجهاز." : "تم إلغاء كتم هذا الصديق.");
   }
 
   async function showBrowserNotification(title: string, body: string) {
@@ -211,6 +334,10 @@ export default function Home() {
           p256dh: keys.p256dh,
           auth: keys.auth,
           user_agent: navigator.userAgent,
+          quiet_enabled: quietEnabled,
+          quiet_start: quietStart,
+          quiet_end: quietEnd,
+          muted_friend_ids: mutedFriendIds,
         },
         { onConflict: "endpoint" }
       );
@@ -327,7 +454,26 @@ export default function Home() {
         };
       });
 
-    setFriends(acceptedFriends);
+    const friendIds = acceptedFriends.map((friend) => friend.user.id);
+    let friendsWithActivity = acceptedFriends;
+    if (friendIds.length > 0) {
+      const { data: recentSignals } = await supabase
+        .from("wake_signals")
+        .select("*")
+        .or(`sender_id.in.(${friendIds.join(",")}),receiver_id.in.(${friendIds.join(",")})`)
+        .or(`sender_id.eq.${userId},receiver_id.eq.${userId}`)
+        .order("created_at", { ascending: false })
+        .limit(80);
+
+      friendsWithActivity = acceptedFriends.map((friend) => ({
+        ...friend,
+        lastSignal: (recentSignals as WakeSignal[] | null | undefined)?.find(
+          (signal) => signal.sender_id === friend.user.id || signal.receiver_id === friend.user.id
+        ),
+      }));
+    }
+
+    setFriends(friendsWithActivity);
     setIncomingRequests(
       rows.filter((row) => row.status === "pending" && row.addressee_id === userId)
     );
@@ -336,7 +482,7 @@ export default function Home() {
     );
 
     await loadMissedSignals(userId);
-    return acceptedFriends;
+    return friendsWithActivity;
   }
 
   async function loadLatestIncoming(friendId: string) {
@@ -450,13 +596,15 @@ export default function Home() {
         },
         async (payload) => {
           const signal = payload.new as WakeSignal;
-          playWakeSound();
           const sender = friends.find((friend) => friend.user.id === signal.sender_id);
+          const isMuted = mutedFriendIds.includes(signal.sender_id);
+          if (!isMuted && !quietActive) playWakeSound();
+          if (!isMuted) vibrate([30, 20, 30]);
           const senderName = sender?.label || sender?.user.display_name || sender?.user.username || "صديقك";
           const notificationText = notificationTextForSignal(senderName, signal.text);
-          notify(notificationText, "warn");
+          notify(isMuted ? `${senderName}: تنبيه مكتوم محفوظ في التنبيهات الفائتة` : notificationText, isMuted ? "ok" : "warn");
           await loadMissedSignals(profile.id);
-          await showBrowserNotification("Sa7i", notificationText);
+          if (!isMuted && !quietActive) await showBrowserNotification("Sa7i", notificationText);
           if (selectedFriend?.user.id === signal.sender_id) {
             setLatestIncoming(signal);
           }
@@ -469,7 +617,7 @@ export default function Home() {
     };
   // Realtime callback intentionally reads latest UI state and refreshes missed signals from Supabase.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [friends, profile, selectedFriend, supabase, wakeSound]);
+  }, [friends, mutedFriendIds, profile, quietActive, selectedFriend, supabase, wakeSound]);
 
   useEffect(() => {
     if (!profile) return;
@@ -707,6 +855,7 @@ export default function Home() {
     try {
       const isReply = Boolean(latestIncoming) && !isEmojiReply(latestIncoming!.text);
       const outgoingText = text ?? (isReply ? "صاحي.." : "صاحي ؟");
+      vibrate(outgoingText === "صاحي ؟" ? [25, 30, 25] : 25);
       const { data: sentSignal, error } = await supabase
         .from("wake_signals")
         .insert({
@@ -790,6 +939,26 @@ export default function Home() {
     await chooseFriend(friend);
   }
 
+  async function clearMissedSignals() {
+    if (!profile || missedSignals.length === 0) return;
+    setBusy(true);
+    try {
+      const { error } = await supabase
+        .from("wake_signals")
+        .update({ seen_at: new Date().toISOString() })
+        .eq("receiver_id", profile.id)
+        .is("seen_at", null);
+      if (error) throw error;
+      setMissedSignals([]);
+      setPendingSignalCount(0);
+      notify("تم مسح التنبيهات الفائتة.");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "تعذر مسح التنبيهات.", "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   if (loading) {
     return (
       <main className="grid min-h-screen place-items-center bg-slate-950 text-white" dir="rtl">
@@ -805,15 +974,20 @@ export default function Home() {
     const buttonText = latestIncoming ? (incomingEmoji ? latestIncoming.text : "صاحي..") : "صاحي ؟";
 
     return (
-      <main className="min-h-screen overflow-hidden bg-[radial-gradient(circle_at_top,#134e4a_0%,#0f172a_42%,#020617_100%)] text-white" dir="rtl">
+      <main className={`min-h-screen overflow-hidden ${themeClass} text-white`} dir="rtl">
         <div className="mx-auto flex min-h-screen w-full max-w-3xl flex-col px-5 py-6 sm:px-8">
           <div className="flex items-center justify-between gap-3">
             <button className={buttonClass("ghost")} onClick={() => void exitFriend()}>
               رجوع
             </button>
-            <button className={buttonClass("ghost")} onClick={signOut}>
-              خروج
-            </button>
+            <div className="flex gap-2">
+              <button className={buttonClass("ghost")} onClick={() => toggleMuteFriend(selectedFriend.user.id)}>
+                {mutedFriendIds.includes(selectedFriend.user.id) ? "إلغاء الكتم" : "كتم"}
+              </button>
+              <button className={buttonClass("ghost")} onClick={signOut}>
+                خروج
+              </button>
+            </div>
           </div>
 
           {toast ? (
@@ -833,7 +1007,15 @@ export default function Home() {
           <section className="grid flex-1 place-items-center py-8 text-center">
             <div>
               <p className="mb-3 text-white/60">@{selectedFriend.user.username}</p>
-              <h1 className="mb-12 text-4xl font-black sm:text-6xl">{selectedFriend.label}</h1>
+              <h1 className="mb-3 text-4xl font-black sm:text-6xl">{selectedFriend.label}</h1>
+              <div className="mb-8 flex flex-wrap justify-center gap-2 text-xs">
+                {mutedFriendIds.includes(selectedFriend.user.id) ? (
+                  <span className="rounded-full bg-amber-300/20 px-3 py-1 text-amber-100">مكتوم</span>
+                ) : null}
+                {quietActive ? (
+                  <span className="rounded-full bg-sky-300/20 px-3 py-1 text-sky-100">وضع الهدوء مفعل الآن</span>
+                ) : null}
+              </div>
 
               <button
                 className={`h-64 w-64 rounded-full text-5xl font-black shadow-[0_0_90px_rgba(52,211,153,0.45)] transition active:scale-95 disabled:opacity-80 sm:h-80 sm:w-80 sm:text-6xl ${
@@ -884,7 +1066,7 @@ export default function Home() {
   }
 
   return (
-    <main className="min-h-screen overflow-hidden bg-[radial-gradient(circle_at_top,#134e4a_0%,#0f172a_42%,#020617_100%)] text-white" dir="rtl">
+    <main className={`min-h-screen overflow-hidden ${themeClass} text-white`} dir="rtl">
       <div className="mx-auto flex min-h-screen w-full max-w-6xl flex-col px-5 py-6 sm:px-8">
         <header className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
@@ -1059,6 +1241,13 @@ export default function Home() {
                     >
                       <p className="text-xl font-black">{friend.label}</p>
                       <p className="text-sm text-emerald-300">@{friend.user.username}</p>
+                      <div className="mt-4 flex items-center justify-between gap-2 rounded-2xl bg-black/20 px-3 py-2 text-xs text-white/60">
+                        <span>{friend.lastSignal ? `آخر تفاعل: ${friend.lastSignal.text}` : "لا يوجد نشاط"}</span>
+                        <span>{formatRelativeTime(friend.lastSignal?.created_at)}</span>
+                      </div>
+                      {mutedFriendIds.includes(friend.user.id) ? (
+                        <p className="mt-2 text-xs text-amber-200">مكتوم على هذا الجهاز</p>
+                      ) : null}
                     </button>
                   ))}
                 </div>
@@ -1072,9 +1261,16 @@ export default function Home() {
             <div className="rounded-[2rem] border border-white/10 bg-white/10 p-5 backdrop-blur sm:p-8">
               <div className="mb-6 flex items-center justify-between gap-3">
                 <h2 className="text-2xl font-black">تنبيهات فائتة</h2>
-                <span className="rounded-full bg-amber-300 px-3 py-1 text-xs font-black text-slate-950">
-                  {missedSignals.length}
-                </span>
+                <div className="flex items-center gap-2">
+                  {missedSignals.length > 0 ? (
+                    <button className={`${buttonClass("ghost")} py-2`} onClick={clearMissedSignals} disabled={busy}>
+                      مسح الكل
+                    </button>
+                  ) : null}
+                  <span className="rounded-full bg-amber-300 px-3 py-1 text-xs font-black text-slate-950">
+                    {missedSignals.length}
+                  </span>
+                </div>
               </div>
               {missedSignals.length === 0 ? (
                 <div className="grid min-h-[320px] place-items-center rounded-[2rem] border border-dashed border-white/15 bg-black/10 p-8 text-center text-white/55">
@@ -1176,6 +1372,68 @@ export default function Home() {
                 >
                   تجربة الصوت
                 </button>
+              </div>
+
+              <div className="rounded-[2rem] border border-white/10 bg-white/10 p-5 backdrop-blur">
+                <h3 className="mb-2 text-lg font-black">لون الواجهة</h3>
+                <p className="mb-4 text-sm leading-6 text-white/55">
+                  اختر لون الخلفية المناسب لك. الاختيار محفوظ على هذا الجهاز.
+                </p>
+                <div className="grid grid-cols-2 gap-2">
+                  {THEME_OPTIONS.map((option) => (
+                    <button
+                      key={option.id}
+                      className={`rounded-2xl border px-4 py-3 text-sm font-black transition ${
+                        theme === option.id
+                          ? "border-emerald-300 bg-emerald-300 text-slate-950"
+                          : "border-white/10 bg-black/20 text-white hover:bg-black/30"
+                      }`}
+                      type="button"
+                      onClick={() => changeTheme(option.id)}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="rounded-[2rem] border border-white/10 bg-white/10 p-5 backdrop-blur">
+                <h3 className="mb-2 text-lg font-black">وضع الهدوء</h3>
+                <p className="mb-4 text-sm leading-6 text-white/55">
+                  إذا فعلته، تنبيهات النظام والصوت توقف في الوقت المحدد، لكن التنبيه يبقى محفوظ في التنبيهات الفائتة.
+                </p>
+                <label className="mb-4 flex cursor-pointer items-center justify-between gap-3 rounded-2xl bg-black/20 p-4">
+                  <span>
+                    <span className="block font-black">تفعيل الهدوء</span>
+                    <span className="block text-xs text-white/50">{quietActive ? "مفعل الآن" : "غير نشط الآن"}</span>
+                  </span>
+                  <input
+                    className="h-5 w-5 accent-emerald-300"
+                    type="checkbox"
+                    checked={quietEnabled}
+                    onChange={(event) => updateQuietHours({ enabled: event.target.checked })}
+                  />
+                </label>
+                <div className="grid grid-cols-2 gap-3">
+                  <label className="block">
+                    <span className="mb-2 block text-xs text-white/60">من</span>
+                    <input
+                      className="w-full rounded-2xl border border-white/10 bg-slate-950/70 px-3 py-3 text-white outline-none ring-emerald-300/50 focus:ring-4"
+                      type="time"
+                      value={quietStart}
+                      onChange={(event) => updateQuietHours({ start: event.target.value })}
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="mb-2 block text-xs text-white/60">إلى</span>
+                    <input
+                      className="w-full rounded-2xl border border-white/10 bg-slate-950/70 px-3 py-3 text-white outline-none ring-emerald-300/50 focus:ring-4"
+                      type="time"
+                      value={quietEnd}
+                      onChange={(event) => updateQuietHours({ end: event.target.value })}
+                    />
+                  </label>
+                </div>
               </div>
             </div>
           </section>

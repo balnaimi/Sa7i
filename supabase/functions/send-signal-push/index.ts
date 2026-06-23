@@ -5,6 +5,10 @@ type PushSubscriptionRow = {
   endpoint: string;
   p256dh: string;
   auth: string;
+  quiet_enabled: boolean;
+  quiet_start: string;
+  quiet_end: string;
+  muted_friend_ids: string[] | null;
 };
 
 type WakeSignal = {
@@ -29,6 +33,22 @@ function jsonResponse(body: unknown, status = 200) {
 function notificationBody(senderName: string, text: string) {
   if (text === "✅" || text === "❌") return `${senderName}: وصلك رد سريع`;
   return `${senderName}: ${text}`;
+}
+
+function minutesFromTime(value: string) {
+  const [hours = "0", minutes = "0"] = value.split(":");
+  return Number(hours) * 60 + Number(minutes);
+}
+
+function quietHoursActive(enabled: boolean, start: string, end: string) {
+  if (!enabled) return false;
+  const now = new Date();
+  const current = now.getHours() * 60 + now.getMinutes();
+  const startMinutes = minutesFromTime(start);
+  const endMinutes = minutesFromTime(end);
+  if (startMinutes === endMinutes) return true;
+  if (startMinutes < endMinutes) return current >= startMinutes && current < endMinutes;
+  return current >= startMinutes || current < endMinutes;
 }
 
 Deno.serve(async (request) => {
@@ -89,7 +109,7 @@ Deno.serve(async (request) => {
 
   const { data: subscriptions, error: subscriptionsError } = await adminClient
     .from("push_subscriptions")
-    .select("endpoint, p256dh, auth")
+    .select("endpoint, p256dh, auth, quiet_enabled, quiet_start, quiet_end, muted_friend_ids")
     .eq("profile_id", signal.receiver_id)
     .returns<PushSubscriptionRow[]>();
 
@@ -107,24 +127,29 @@ Deno.serve(async (request) => {
   });
 
   const results = await Promise.allSettled(
-    (subscriptions ?? []).map(async (subscription) => {
-      try {
-        await webpush.sendNotification(
-          {
-            endpoint: subscription.endpoint,
-            keys: { p256dh: subscription.p256dh, auth: subscription.auth },
-          },
-          payload
-        );
-        return { endpoint: subscription.endpoint, ok: true };
-      } catch (error) {
-        const statusCode = (error as { statusCode?: number }).statusCode;
-        if (statusCode === 404 || statusCode === 410) {
-          await adminClient.from("push_subscriptions").delete().eq("endpoint", subscription.endpoint);
+    (subscriptions ?? [])
+      .filter((subscription: PushSubscriptionRow) => {
+        if (subscription.muted_friend_ids?.includes(signal.sender_id)) return false;
+        return !quietHoursActive(subscription.quiet_enabled, subscription.quiet_start, subscription.quiet_end);
+      })
+      .map(async (subscription: PushSubscriptionRow) => {
+        try {
+          await webpush.sendNotification(
+            {
+              endpoint: subscription.endpoint,
+              keys: { p256dh: subscription.p256dh, auth: subscription.auth },
+            },
+            payload
+          );
+          return { endpoint: subscription.endpoint, ok: true };
+        } catch (error) {
+          const statusCode = (error as { statusCode?: number }).statusCode;
+          if (statusCode === 404 || statusCode === 410) {
+            await adminClient.from("push_subscriptions").delete().eq("endpoint", subscription.endpoint);
+          }
+          return { endpoint: subscription.endpoint, ok: false, statusCode };
         }
-        return { endpoint: subscription.endpoint, ok: false, statusCode };
-      }
-    })
+      })
   );
 
   const successCount = results.filter(

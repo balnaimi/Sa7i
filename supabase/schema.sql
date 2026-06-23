@@ -68,6 +68,10 @@ create table if not exists public.push_subscriptions (
   p256dh text not null,
   auth text not null,
   user_agent text,
+  quiet_enabled boolean not null default false,
+  quiet_start text not null default '23:00',
+  quiet_end text not null default '08:00',
+  muted_friend_ids uuid[] not null default '{}',
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
