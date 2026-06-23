@@ -801,8 +801,54 @@ export default function Home() {
               <h2 className="mb-2 text-2xl font-black">الأصدقاء</h2>
               <p className="mb-6 text-white/60">اختر شخص، وبعدها بتفتح صفحة فيها زر واحد فقط.</p>
               {friends.length === 0 ? (
-                <div className="grid min-h-[320px] place-items-center rounded-[2rem] border border-dashed border-white/15 bg-black/10 p-8 text-center text-white/55">
-                  أول مرة بتكون الصفحة فاضية. أضف شخص من الإعدادات وانتظر قبوله.
+                <div className="rounded-[2rem] border border-dashed border-white/15 bg-black/10 p-5 sm:p-8">
+                  <div className="mb-6 text-center">
+                    <h3 className="text-2xl font-black text-white">أول مرة؟ أضف صديقك</h3>
+                    <p className="mt-2 text-sm leading-6 text-white/55">
+                      انسخ كودك وأرسله له، أو اكتب كوده هنا وأرسل طلب الإضافة.
+                    </p>
+                  </div>
+
+                  <div className="grid gap-4 lg:grid-cols-2">
+                    <div className="rounded-3xl border border-emerald-300/20 bg-emerald-300/10 p-4">
+                      <p className="text-xs text-white/60">كودك أنت</p>
+                      <button
+                        className="mt-2 w-full rounded-xl bg-slate-950/70 px-4 py-3 font-mono text-2xl font-black tracking-[0.35em] text-emerald-200"
+                        onClick={async () => {
+                          if (!profile?.invite_code) return;
+                          await navigator.clipboard?.writeText(profile.invite_code);
+                          notify("تم نسخ كود الإضافة.");
+                        }}
+                        title="اضغط لنسخ الكود"
+                      >
+                        {profile?.invite_code}
+                      </button>
+                      <p className="mt-2 text-xs leading-5 text-white/50">أرسل هذا الكود لصديقك عشان يضيفك.</p>
+                    </div>
+
+                    <form className="rounded-3xl border border-white/10 bg-white/10 p-4" onSubmit={addFriend}>
+                      <p className="mb-3 text-sm font-black text-white">كود صديقك</p>
+                      <input
+                        className="mb-3 w-full rounded-2xl border border-white/10 bg-slate-950/70 px-4 py-3 font-mono text-lg tracking-[0.25em] text-white outline-none ring-emerald-300/50 placeholder:font-sans placeholder:tracking-normal focus:ring-4"
+                        value={friendCode}
+                        onChange={(event) => setFriendCode(event.target.value.toUpperCase())}
+                        placeholder="مثال: A1B2C3D4"
+                        inputMode="text"
+                        maxLength={8}
+                        dir="ltr"
+                      />
+                      <input
+                        className="mb-3 w-full rounded-2xl border border-white/10 bg-slate-950/70 px-4 py-3 text-white outline-none ring-emerald-300/50 focus:ring-4"
+                        value={friendLabel}
+                        onChange={(event) => setFriendLabel(event.target.value)}
+                        placeholder="الاسم اللي بيظهر عندك لهذا الشخص"
+                        maxLength={40}
+                      />
+                      <button className={`${buttonClass()} w-full`} disabled={busy}>
+                        إرسال طلب
+                      </button>
+                    </form>
+                  </div>
                 </div>
               ) : (
                 <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
