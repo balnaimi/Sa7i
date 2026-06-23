@@ -554,6 +554,18 @@ export default function Home() {
     }
   }
 
+  async function exitFriend() {
+    if (profile && latestIncoming && isEmojiReply(latestIncoming.text)) {
+      await supabase
+        .from("wake_signals")
+        .update({ seen_at: new Date().toISOString() })
+        .eq("id", latestIncoming.id);
+      await loadMissedSignals(profile.id);
+    }
+    setLatestIncoming(null);
+    setSelectedFriend(null);
+  }
+
   async function dismissIncoming() {
     if (!latestIncoming || !profile) return;
     await supabase
@@ -600,7 +612,7 @@ export default function Home() {
       <main className="min-h-screen overflow-hidden bg-[radial-gradient(circle_at_top,#134e4a_0%,#0f172a_42%,#020617_100%)] text-white" dir="rtl">
         <div className="mx-auto flex min-h-screen w-full max-w-3xl flex-col px-5 py-6 sm:px-8">
           <div className="flex items-center justify-between gap-3">
-            <button className={buttonClass("ghost")} onClick={() => setSelectedFriend(null)}>
+            <button className={buttonClass("ghost")} onClick={() => void exitFriend()}>
               رجوع
             </button>
             <button className={buttonClass("ghost")} onClick={signOut}>
