@@ -225,6 +225,32 @@ export default function Home() {
     }
   }
 
+  async function testSystemNotifications() {
+    if (!pushEnabled) {
+      notify("فعّل تنبيهات النظام على هذا الجهاز أولاً.", "warn");
+      return;
+    }
+    setBusy(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("send-signal-push", {
+        body: { test: true },
+      });
+      if (error) throw error;
+      const result = data as { attempted?: number; delivered?: number; failed?: number } | null;
+      if (!result?.attempted) {
+        notify("ما لقيت اشتراك محفوظ لهذا الجهاز. اضغط تفعيل التنبيهات مرة ثانية.", "error");
+      } else if (!result.delivered) {
+        notify(`وصل الطلب للـ Function لكن فشل إرسال Push. failed=${result.failed ?? "?"}`, "error");
+      } else {
+        notify("أرسلت تنبيه اختبار. إذا ما ظهر، راجع إعدادات تنبيهات Chrome/Android.");
+      }
+    } catch (error) {
+      notify(error instanceof Error ? `فشل اختبار التنبيه: ${error.message}` : "فشل اختبار التنبيه.", "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function ensureProfile(userId: string, uname: string, name?: string) {
     const normalized = normalizeUsername(uname);
     const { data, error } = await supabase
@@ -668,10 +694,8 @@ export default function Home() {
         .single();
       if (error) throw error;
 
-      supabase.functions.invoke("send-signal-push", {
+      const { data: pushResult, error: pushError } = await supabase.functions.invoke("send-signal-push", {
         body: { signal_id: sentSignal.id },
-      }).catch(() => {
-        // النظام داخل التطبيق يظل يعمل حتى لو فشل Push في الخلفية.
       });
 
       if (latestIncoming) {
@@ -683,7 +707,18 @@ export default function Home() {
         await loadMissedSignals(profile.id);
       }
 
-      notify(`أرسلت: ${outgoingText}`);
+      if (pushError) {
+        notify(`أرسلت: ${outgoingText}، لكن تنبيه النظام فشل: ${pushError.message}`, "warn");
+      } else {
+        const result = pushResult as { attempted?: number; delivered?: number; failed?: number } | null;
+        if (!result?.attempted) {
+          notify(`أرسلت: ${outgoingText}، لكن ما فيه جهاز مفعل تنبيهات عند الطرف الثاني.`, "warn");
+        } else if (!result.delivered) {
+          notify(`أرسلت: ${outgoingText}، لكن Push فشل. failed=${result.failed ?? "?"}`, "warn");
+        } else {
+          notify(`أرسلت: ${outgoingText}`);
+        }
+      }
     } catch (error) {
       notify(error instanceof Error ? error.message : "تعذر إرسال التنبيه.", "error");
     } finally {
@@ -1072,6 +1107,14 @@ export default function Home() {
                 </p>
                 <button className={`${buttonClass(pushEnabled ? "ghost" : "primary")} w-full`} onClick={enableSystemNotifications} disabled={busy}>
                   {pushEnabled ? "تنبيهات النظام مفعلة على هذا الجهاز" : "تفعيل تنبيهات النظام"}
+                </button>
+                <button
+                  className={`${buttonClass("ghost")} mt-3 w-full`}
+                  onClick={testSystemNotifications}
+                  disabled={busy || !pushEnabled}
+                  type="button"
+                >
+                  اختبار تنبيه النظام
                 </button>
                 {!PUBLIC_VAPID_KEY ? (
                   <p className="mt-3 text-xs leading-5 text-amber-200">

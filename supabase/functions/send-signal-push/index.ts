@@ -55,17 +55,31 @@ Deno.serve(async (request) => {
   const { data: userData, error: userError } = await userClient.auth.getUser();
   if (userError || !userData.user) return jsonResponse({ error: "Unauthorized" }, 401);
 
-  const { signal_id } = await request.json().catch(() => ({ signal_id: null }));
-  if (!signal_id || typeof signal_id !== "string") return jsonResponse({ error: "signal_id is required" }, 400);
+  const body = await request.json().catch(() => ({ signal_id: null, test: false }));
+  const isTest = body.test === true;
+  const signalId = body.signal_id;
+  let signal: WakeSignal;
 
-  const { data: signal, error: signalError } = await adminClient
-    .from("wake_signals")
-    .select("id, sender_id, receiver_id, text")
-    .eq("id", signal_id)
-    .single<WakeSignal>();
+  if (isTest) {
+    signal = {
+      id: "test",
+      sender_id: userData.user.id,
+      receiver_id: userData.user.id,
+      text: "اختبار تنبيه النظام",
+    };
+  } else {
+    if (!signalId || typeof signalId !== "string") return jsonResponse({ error: "signal_id is required" }, 400);
 
-  if (signalError || !signal) return jsonResponse({ error: "Signal not found" }, 404);
-  if (signal.sender_id !== userData.user.id) return jsonResponse({ error: "Forbidden" }, 403);
+    const { data, error: signalError } = await adminClient
+      .from("wake_signals")
+      .select("id, sender_id, receiver_id, text")
+      .eq("id", signalId)
+      .single<WakeSignal>();
+
+    if (signalError || !data) return jsonResponse({ error: "Signal not found" }, 404);
+    if (data.sender_id !== userData.user.id) return jsonResponse({ error: "Forbidden" }, 403);
+    signal = data;
+  }
 
   const { data: sender } = await adminClient
     .from("profiles")
@@ -112,5 +126,16 @@ Deno.serve(async (request) => {
     })
   );
 
-  return jsonResponse({ delivered: results.filter((result) => result.status === "fulfilled").length });
+  const successCount = results.filter(
+    (result) => result.status === "fulfilled" && result.value.ok
+  ).length;
+  const failureCount = results.length - successCount;
+
+  return jsonResponse({
+    ok: failureCount === 0,
+    attempted: results.length,
+    delivered: successCount,
+    failed: failureCount,
+    test: isTest,
+  });
 });
