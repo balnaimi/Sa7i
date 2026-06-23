@@ -311,23 +311,23 @@ export default function Home() {
     if (friendsError) throw friendsError;
 
     const rows = (friendships ?? []) as unknown as Friendship[];
-    setFriends(
-      rows
-        .filter((row) => row.status === "accepted")
-        .map((row) => {
-          const isRequester = row.requester_id === userId;
-          const user = isRequester ? row.addressee! : row.requester!;
-          const label = (isRequester ? row.requester_label : row.addressee_label) ||
-            user.display_name ||
-            user.username;
+    const acceptedFriends = rows
+      .filter((row) => row.status === "accepted")
+      .map((row) => {
+        const isRequester = row.requester_id === userId;
+        const user = isRequester ? row.addressee! : row.requester!;
+        const label = (isRequester ? row.requester_label : row.addressee_label) ||
+          user.display_name ||
+          user.username;
 
-          return {
-            friendshipId: row.id,
-            user,
-            label,
-          };
-        })
-    );
+        return {
+          friendshipId: row.id,
+          user,
+          label,
+        };
+      });
+
+    setFriends(acceptedFriends);
     setIncomingRequests(
       rows.filter((row) => row.status === "pending" && row.addressee_id === userId)
     );
@@ -336,6 +336,7 @@ export default function Home() {
     );
 
     await loadMissedSignals(userId);
+    return acceptedFriends;
   }
 
   async function loadLatestIncoming(friendId: string) {
@@ -361,6 +362,23 @@ export default function Home() {
     setSelectedFriend(friend);
     const incoming = await loadLatestIncoming(friend.user.id);
     setLatestIncoming(incoming);
+  }
+
+  async function openFriendFromNotification(friend: FriendRow, receiverId: string) {
+    setSelectedFriend(friend);
+    setView("home");
+    const { data, error } = await supabase
+      .from("wake_signals")
+      .select("*")
+      .eq("sender_id", friend.user.id)
+      .eq("receiver_id", receiverId)
+      .is("seen_at", null)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (!error) setLatestIncoming(data as WakeSignal | null);
+    window.history.replaceState(null, "", window.location.pathname);
   }
 
   useEffect(() => {
@@ -393,8 +411,14 @@ export default function Home() {
 
       if (data.user) {
         try {
-          await loadEverything(data.user.id);
-          setView("home");
+          const loadedFriends = await loadEverything(data.user.id);
+          const notificationFriendId = new URLSearchParams(window.location.search).get("friend");
+          const notificationFriend = loadedFriends.find((friend) => friend.user.id === notificationFriendId);
+          if (notificationFriend) {
+            await openFriendFromNotification(notificationFriend, data.user.id);
+          } else {
+            setView("home");
+          }
         } catch {
           await supabase.auth.signOut();
           setView("auth");

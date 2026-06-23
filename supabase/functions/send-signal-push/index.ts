@@ -98,11 +98,12 @@ Deno.serve(async (request) => {
   webpush.setVapidDetails(vapidSubject, vapidPublicKey, vapidPrivateKey);
 
   const senderName = sender?.display_name || sender?.username || "صديقك";
+  const targetUrl = isTest ? "/" : `/?friend=${encodeURIComponent(signal.sender_id)}&signal=${encodeURIComponent(signal.id)}`;
   const payload = JSON.stringify({
     title: "Sa7i",
     body: notificationBody(senderName, signal.text),
     tag: `sa7i-${signal.sender_id}`,
-    url: "/",
+    url: targetUrl,
   });
 
   const results = await Promise.allSettled(
