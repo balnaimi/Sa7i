@@ -2,13 +2,18 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createClient, hasSupabaseConfig } from "@/lib/supabase/client";
-import type { Friendship, Profile, WakeSignal } from "@/lib/types";
+import type { Friendship, Profile, WakeSignal, WakeSignalText } from "@/lib/types";
 
 const USERNAME_RE = /^[a-zA-Z0-9_]{3,24}$/;
 
 type View = "auth" | "home";
 type ToastTone = "ok" | "warn" | "error";
 type Toast = { tone: ToastTone; message: string } | null;
+const EMOJI_REPLIES: WakeSignalText[] = ["✅", "❌"];
+
+function isEmojiReply(text: WakeSignalText) {
+  return EMOJI_REPLIES.includes(text);
+}
 
 type FriendRow = {
   friendshipId: string;
@@ -201,7 +206,8 @@ export default function Home() {
 
   async function chooseFriend(friend: FriendRow) {
     setSelectedFriend(friend);
-    setLatestIncoming(await loadLatestIncoming(friend.user.id));
+    const incoming = await loadLatestIncoming(friend.user.id);
+    setLatestIncoming(incoming);
   }
 
   useEffect(() => {
@@ -438,15 +444,16 @@ export default function Home() {
     }
   }
 
-  async function sendWakeSignal() {
+  async function sendWakeSignal(text?: WakeSignalText) {
     if (!profile || !selectedFriend) return;
     setBusy(true);
     try {
-      const isReply = Boolean(latestIncoming);
+      const isReply = Boolean(latestIncoming) && !isEmojiReply(latestIncoming!.text);
+      const outgoingText = text ?? (isReply ? "صاحي.." : "صاحي ؟");
       const { error } = await supabase.from("wake_signals").insert({
         sender_id: profile.id,
         receiver_id: selectedFriend.user.id,
-        text: isReply ? "صاحي.." : "صاحي ؟",
+        text: outgoingText,
       });
       if (error) throw error;
 
@@ -459,7 +466,7 @@ export default function Home() {
         setPendingSignalCount((count) => Math.max(0, count - 1));
       }
 
-      notify(`أرسلت: ${isReply ? "صاحي.." : "صاحي ؟"}`);
+      notify(`أرسلت: ${outgoingText}`);
     } catch (error) {
       notify(error instanceof Error ? error.message : "تعذر إرسال التنبيه.", "error");
     } finally {
@@ -467,11 +474,104 @@ export default function Home() {
     }
   }
 
+  async function dismissIncoming() {
+    if (!latestIncoming) return;
+    await supabase
+      .from("wake_signals")
+      .update({ seen_at: new Date().toISOString() })
+      .eq("id", latestIncoming.id);
+    setLatestIncoming(null);
+    setPendingSignalCount((count) => Math.max(0, count - 1));
+  }
+
   if (loading) {
     return (
       <main className="grid min-h-screen place-items-center bg-slate-950 text-white" dir="rtl">
         <div className="animate-pulse rounded-3xl border border-white/10 bg-white/5 px-8 py-6">
           جار التحميل...
+        </div>
+      </main>
+    );
+  }
+
+  if (view === "home" && selectedFriend) {
+    const incomingEmoji = latestIncoming && isEmojiReply(latestIncoming.text);
+    const buttonText = latestIncoming ? (incomingEmoji ? latestIncoming.text : "صاحي..") : "صاحي ؟";
+
+    return (
+      <main className="min-h-screen overflow-hidden bg-[radial-gradient(circle_at_top,#134e4a_0%,#0f172a_42%,#020617_100%)] text-white" dir="rtl">
+        <div className="mx-auto flex min-h-screen w-full max-w-3xl flex-col px-5 py-6 sm:px-8">
+          <div className="flex items-center justify-between gap-3">
+            <button className={buttonClass("ghost")} onClick={() => setSelectedFriend(null)}>
+              رجوع
+            </button>
+            <button className={buttonClass("ghost")} onClick={signOut}>
+              خروج
+            </button>
+          </div>
+
+          {toast ? (
+            <div
+              className={`fixed left-5 top-5 z-50 max-w-sm rounded-2xl border px-5 py-4 text-sm shadow-2xl backdrop-blur ${
+                toast.tone === "error"
+                  ? "border-rose-400/40 bg-rose-950/90 text-rose-50"
+                  : toast.tone === "warn"
+                    ? "border-amber-300/40 bg-amber-950/90 text-amber-50"
+                    : "border-emerald-300/40 bg-emerald-950/90 text-emerald-50"
+              }`}
+            >
+              {toast.message}
+            </div>
+          ) : null}
+
+          <section className="grid flex-1 place-items-center py-8 text-center">
+            <div>
+              <p className="mb-3 text-white/60">@{selectedFriend.user.username}</p>
+              <h1 className="mb-12 text-4xl font-black sm:text-6xl">{selectedFriend.label}</h1>
+
+              <button
+                className={`h-64 w-64 rounded-full text-5xl font-black shadow-[0_0_90px_rgba(52,211,153,0.45)] transition active:scale-95 disabled:opacity-80 sm:h-80 sm:w-80 sm:text-6xl ${
+                  incomingEmoji
+                    ? "bg-white text-slate-950"
+                    : "bg-emerald-400 text-slate-950 hover:scale-105"
+                }`}
+                onClick={incomingEmoji ? dismissIncoming : () => sendWakeSignal()}
+                disabled={busy}
+                aria-label={incomingEmoji ? "تم استلام الرد" : "إرسال تنبيه"}
+              >
+                {buttonText}
+              </button>
+
+              {latestIncoming && !incomingEmoji ? (
+                <div className="mt-8 flex justify-center gap-3">
+                  <button
+                    className="rounded-3xl bg-white px-8 py-5 text-4xl shadow-lg transition hover:scale-105 active:scale-95 disabled:opacity-60"
+                    onClick={() => sendWakeSignal("✅")}
+                    disabled={busy}
+                    aria-label="OK"
+                  >
+                    ✅
+                  </button>
+                  <button
+                    className="rounded-3xl bg-white px-8 py-5 text-4xl shadow-lg transition hover:scale-105 active:scale-95 disabled:opacity-60"
+                    onClick={() => sendWakeSignal("❌")}
+                    disabled={busy}
+                    aria-label="Not OK"
+                  >
+                    ❌
+                  </button>
+                </div>
+              ) : null}
+
+              <p className="mx-auto mt-8 max-w-md text-sm leading-7 text-white/55">
+                {incomingEmoji
+                  ? "هذا رد سريع من صديقك. اضغط على الإيموجي لإخفائه."
+                  : latestIncoming
+                    ? "وصلك تنبيه من هذا الشخص. رد بزر صاحي.. أو رد سريع بإيموجي."
+                    : "اضغط الزر، وبيوصل للطرف الثاني صوت وتنبيه داخل التطبيق."}
+              </p>
+            </div>
+          </section>
         </div>
       </main>
     );
@@ -717,7 +817,7 @@ export default function Home() {
                     <h2 className="mb-10 text-4xl font-black">{selectedFriend.label}</h2>
                     <button
                       className="h-56 w-56 rounded-full bg-emerald-400 text-4xl font-black text-slate-950 shadow-[0_0_80px_rgba(52,211,153,0.45)] transition hover:scale-105 active:scale-95 disabled:opacity-60 sm:h-72 sm:w-72 sm:text-5xl"
-                      onClick={sendWakeSignal}
+                      onClick={() => sendWakeSignal()}
                       disabled={busy}
                     >
                       {latestIncoming ? "صاحي.." : "صاحي ؟"}

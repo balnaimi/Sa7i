@@ -52,7 +52,7 @@ create table if not exists public.wake_signals (
   id uuid primary key default gen_random_uuid(),
   sender_id uuid not null references public.profiles(id) on delete cascade,
   receiver_id uuid not null references public.profiles(id) on delete cascade,
-  text text not null check (text in ('صاحي ؟', 'صاحي..')),
+  text text not null check (text in ('صاحي ؟', 'صاحي..', '✅', '❌')),
   seen_at timestamptz,
   created_at timestamptz not null default now(),
   constraint wake_signals_not_self check (sender_id <> receiver_id)

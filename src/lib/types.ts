@@ -21,11 +21,13 @@ export type Friendship = {
   addressee?: Profile;
 };
 
+export type WakeSignalText = "صاحي ؟" | "صاحي.." | "✅" | "❌";
+
 export type WakeSignal = {
   id: string;
   sender_id: string;
   receiver_id: string;
-  text: "صاحي ؟" | "صاحي..";
+  text: WakeSignalText;
   seen_at: string | null;
   created_at: string;
 };
