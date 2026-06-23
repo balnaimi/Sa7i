@@ -1045,10 +1045,10 @@ export default function Home() {
             </div>
           ) : null}
 
-          <section className="grid flex-1 place-items-center py-8 text-center">
-            <div>
+          <section className="flex flex-1 items-center justify-center py-6 text-center sm:py-8">
+            <div className="flex w-full max-w-md flex-col items-center">
               <p className="mb-3 text-white/60">@{selectedFriend.user.username}</p>
-              <h1 className="mb-3 text-4xl font-black sm:text-6xl">{selectedFriend.label}</h1>
+              <h1 className="mb-3 text-center text-4xl font-black sm:text-6xl">{selectedFriend.label}</h1>
               <div className="mb-8 flex flex-wrap justify-center gap-2 text-xs">
                 {mutedFriendIds.includes(selectedFriend.user.id) ? (
                   <span className="rounded-full bg-amber-300/20 px-3 py-1 text-amber-100">مكتوم</span>
