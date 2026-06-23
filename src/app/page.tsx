@@ -51,7 +51,8 @@ export default function Home() {
   const [outgoingRequests, setOutgoingRequests] = useState<Friendship[]>([]);
   const [selectedFriend, setSelectedFriend] = useState<Profile | null>(null);
   const [latestIncoming, setLatestIncoming] = useState<WakeSignal | null>(null);
-  const [friendUsername, setFriendUsername] = useState("");
+  const [pendingSignalCount, setPendingSignalCount] = useState(0);
+  const [friendCode, setFriendCode] = useState("");
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState<Toast>(null);
@@ -155,6 +156,16 @@ export default function Home() {
     setOutgoingRequests(
       rows.filter((row) => row.status === "pending" && row.requester_id === userId)
     );
+
+    const { count: signalCount, error: signalCountError } = await supabase
+      .from("wake_signals")
+      .select("id", { count: "exact", head: true })
+      .eq("receiver_id", userId)
+      .is("seen_at", null);
+
+    if (!signalCountError) {
+      setPendingSignalCount(signalCount ?? 0);
+    }
   }
 
   async function loadLatestIncoming(friendId: string) {
@@ -240,6 +251,7 @@ export default function Home() {
           const sender = friends.find((friend) => friend.user.id === signal.sender_id)?.user;
           const senderName = sender?.display_name || sender?.username || "صديقك";
           notify(`${senderName}: ${signal.text}`, "warn");
+          setPendingSignalCount((count) => count + 1);
           await showBrowserNotification("Sa7i", `${senderName}: ${signal.text}`);
           if (selectedFriend?.id === signal.sender_id) {
             setLatestIncoming(signal);
@@ -252,6 +264,40 @@ export default function Home() {
       supabase.removeChannel(channel);
     };
   }, [friends, profile, selectedFriend, supabase]);
+
+  useEffect(() => {
+    if (!profile) return;
+
+    const channel = supabase
+      .channel(`friendships-${profile.id}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "friendships",
+          filter: `requester_id=eq.${profile.id}`,
+        },
+        () => loadEverything(profile.id)
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "friendships",
+          filter: `addressee_id=eq.${profile.id}`,
+        },
+        () => loadEverything(profile.id)
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  // نعيد تحميل القوائم لما تصل/تتغير طلبات الصداقة للطرف الحالي.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profile, supabase]);
 
   async function handleAuth(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -309,6 +355,7 @@ export default function Home() {
     setIncomingRequests([]);
     setOutgoingRequests([]);
     setSelectedFriend(null);
+    setPendingSignalCount(0);
     setView("auth");
   }
 
@@ -316,12 +363,12 @@ export default function Home() {
     event.preventDefault();
     if (!profile) return;
 
-    const targetUsername = normalizeUsername(friendUsername);
-    if (!USERNAME_RE.test(targetUsername)) {
-      notify("اكتب اسم مستخدم صحيح.", "error");
+    const targetCode = friendCode.trim().toUpperCase().replace(/[^A-F0-9]/g, "");
+    if (!/^[A-F0-9]{8}$/.test(targetCode)) {
+      notify("اكتب كود إضافة صحيح من 8 خانات.", "error");
       return;
     }
-    if (targetUsername === profile.username) {
+    if (targetCode === profile.invite_code) {
       notify("ما تقدر تضيف نفسك.", "error");
       return;
     }
@@ -331,9 +378,9 @@ export default function Home() {
       const { data: target, error: targetError } = await supabase
         .from("profiles")
         .select("*")
-        .eq("username", targetUsername)
+        .eq("invite_code", targetCode)
         .single();
-      if (targetError) throw new Error("ما حصلت هذا المستخدم.");
+      if (targetError) throw new Error("ما حصلت حساب بهذا الكود.");
 
       const { error } = await supabase.from("friendships").insert({
         requester_id: profile.id,
@@ -341,7 +388,7 @@ export default function Home() {
       });
       if (error) throw error;
 
-      setFriendUsername("");
+      setFriendCode("");
       await loadEverything(profile.id);
       notify("تم إرسال طلب الإضافة.");
     } catch (error) {
@@ -387,6 +434,7 @@ export default function Home() {
           .update({ seen_at: new Date().toISOString() })
           .eq("id", latestIncoming.id);
         setLatestIncoming(null);
+        setPendingSignalCount((count) => Math.max(0, count - 1));
       }
 
       notify(`أرسلت: ${isReply ? "صاحي.." : "صاحي ؟"}`);
@@ -513,15 +561,47 @@ export default function Home() {
                 <p className="text-sm text-white/60">داخل باسم</p>
                 <h2 className="text-2xl font-black">{profile?.display_name || profile?.username}</h2>
                 <p className="text-sm text-emerald-300">@{profile?.username}</p>
+                <div className="mt-4 rounded-2xl border border-emerald-300/20 bg-emerald-300/10 p-4">
+                  <p className="text-xs text-white/60">كود الإضافة الخاص فيك</p>
+                  <button
+                    className="mt-2 w-full rounded-xl bg-slate-950/70 px-4 py-3 font-mono text-2xl font-black tracking-[0.35em] text-emerald-200"
+                    onClick={async () => {
+                      if (!profile?.invite_code) return;
+                      await navigator.clipboard?.writeText(profile.invite_code);
+                      notify("تم نسخ كود الإضافة.");
+                    }}
+                    title="اضغط لنسخ الكود"
+                  >
+                    {profile?.invite_code}
+                  </button>
+                  <p className="mt-2 text-xs leading-5 text-white/50">أرسل هذا الكود لصديقك عشان يضيفك. لا نستخدم اسم المستخدم للإضافة.</p>
+                </div>
+                <div className="mt-4 grid grid-cols-3 gap-2 text-center text-xs">
+                  <div className="rounded-xl bg-black/20 p-3">
+                    <p className="text-2xl font-black text-emerald-300">{incomingRequests.length}</p>
+                    <p className="text-white/50">واردة</p>
+                  </div>
+                  <div className="rounded-xl bg-black/20 p-3">
+                    <p className="text-2xl font-black text-amber-300">{outgoingRequests.length}</p>
+                    <p className="text-white/50">مرسلة</p>
+                  </div>
+                  <div className="rounded-xl bg-black/20 p-3">
+                    <p className="text-2xl font-black text-sky-300">{pendingSignalCount}</p>
+                    <p className="text-white/50">تنبيهات</p>
+                  </div>
+                </div>
               </div>
 
               <form className="rounded-[2rem] border border-white/10 bg-white/10 p-5 backdrop-blur" onSubmit={addFriend}>
-                <h3 className="mb-4 text-lg font-black">إضافة شخص</h3>
+                <h3 className="mb-4 text-lg font-black">إضافة شخص بالكود</h3>
                 <input
-                  className="mb-3 w-full rounded-2xl border border-white/10 bg-slate-950/70 px-4 py-3 text-white outline-none ring-emerald-300/50 focus:ring-4"
-                  value={friendUsername}
-                  onChange={(event) => setFriendUsername(event.target.value)}
-                  placeholder="اسم المستخدم"
+                  className="mb-3 w-full rounded-2xl border border-white/10 bg-slate-950/70 px-4 py-3 font-mono text-lg tracking-[0.25em] text-white outline-none ring-emerald-300/50 placeholder:font-sans placeholder:tracking-normal focus:ring-4"
+                  value={friendCode}
+                  onChange={(event) => setFriendCode(event.target.value.toUpperCase())}
+                  placeholder="مثال: A1B2C3D4"
+                  inputMode="text"
+                  maxLength={8}
+                  dir="ltr"
                 />
                 <button className={`${buttonClass()} w-full`} disabled={busy}>
                   إرسال طلب

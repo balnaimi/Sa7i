@@ -9,9 +9,25 @@ create table if not exists public.profiles (
   id uuid primary key references auth.users(id) on delete cascade,
   username text not null unique,
   display_name text,
+  invite_code text not null default upper(substr(replace(gen_random_uuid()::text, '-', ''), 1, 8)) unique,
   created_at timestamptz not null default now(),
-  constraint profiles_username_format check (username ~ '^[a-z0-9_]{3,24}$')
+  constraint profiles_username_format check (username ~ '^[a-z0-9_]{3,24}$'),
+  constraint profiles_invite_code_format check (invite_code ~ '^[A-F0-9]{8}$')
 );
+
+alter table public.profiles
+add column if not exists invite_code text;
+
+update public.profiles
+set invite_code = upper(substr(replace(gen_random_uuid()::text, '-', ''), 1, 8))
+where invite_code is null;
+
+alter table public.profiles
+alter column invite_code set not null,
+alter column invite_code set default upper(substr(replace(gen_random_uuid()::text, '-', ''), 1, 8));
+
+create unique index if not exists profiles_invite_code_key
+on public.profiles (invite_code);
 
 create table if not exists public.friendships (
   id uuid primary key default gen_random_uuid(),
@@ -156,7 +172,14 @@ to authenticated
 using (auth.uid() = receiver_id)
 with check (auth.uid() = receiver_id);
 
--- تفعيل Realtime على جدول التنبيهات.
+-- تفعيل Realtime على جداول الطلبات والتنبيهات.
+do $$
+begin
+  alter publication supabase_realtime add table public.friendships;
+exception
+  when duplicate_object then null;
+end $$;
+
 do $$
 begin
   alter publication supabase_realtime add table public.wake_signals;

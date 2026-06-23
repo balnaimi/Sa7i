@@ -2,6 +2,7 @@ export type Profile = {
   id: string;
   username: string;
   display_name: string | null;
+  invite_code: string;
   created_at: string;
 };
 
