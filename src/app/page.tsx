@@ -9,7 +9,15 @@ const USERNAME_RE = /^[a-zA-Z0-9_]{3,24}$/;
 type View = "auth" | "home" | "settings" | "missed";
 type ToastTone = "ok" | "warn" | "error";
 type Toast = { tone: ToastTone; message: string } | null;
+type WakeSoundId = "classic" | "soft" | "urgent" | "chime";
 const EMOJI_REPLIES: WakeSignalText[] = ["✅", "❌"];
+const WAKE_SOUND_STORAGE_KEY = "sa7i:wake-sound";
+const WAKE_SOUND_OPTIONS: { id: WakeSoundId; label: string; description: string }[] = [
+  { id: "classic", label: "التنبيه الأساسي", description: "ثلاث نغمات واضحة مثل الحالي." },
+  { id: "soft", label: "هادئ", description: "نغمة خفيفة وأقل إزعاجاً." },
+  { id: "urgent", label: "قوي", description: "تنبيه أسرع وأوضح إذا تبي شيء يلفت الانتباه." },
+  { id: "chime", label: "جرس", description: "صوت جرس قصير بنغمة أعلى." },
+];
 
 function isEmojiReply(text: WakeSignalText) {
   return EMOJI_REPLIES.includes(text);
@@ -83,6 +91,11 @@ export default function Home() {
   const [friendCode, setFriendCode] = useState("");
   const [friendLabel, setFriendLabel] = useState("");
   const [acceptLabels, setAcceptLabels] = useState<Record<string, string>>({});
+  const [wakeSound, setWakeSound] = useState<WakeSoundId>(() => {
+    if (typeof window === "undefined") return "classic";
+    const savedSound = window.localStorage.getItem(WAKE_SOUND_STORAGE_KEY);
+    return WAKE_SOUND_OPTIONS.some((option) => option.id === savedSound) ? (savedSound as WakeSoundId) : "classic";
+  });
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState<Toast>(null);
@@ -92,7 +105,7 @@ export default function Home() {
     window.setTimeout(() => setToast(null), 3800);
   }
 
-  function playWakeSound() {
+  function playWakeSound(sound: WakeSoundId = wakeSound) {
     const AudioCtx = window.AudioContext ||
       (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
     if (!AudioCtx) return;
@@ -100,20 +113,35 @@ export default function Home() {
     const context = audioContextRef.current ?? new AudioCtx();
     audioContextRef.current = context;
 
+    const patterns: Record<WakeSoundId, { offsets: number[]; frequencies: number[]; volume: number; duration: number; type: OscillatorType }> = {
+      classic: { offsets: [0, 0.18, 0.36], frequencies: [660, 880, 660], volume: 0.24, duration: 0.16, type: "sine" },
+      soft: { offsets: [0, 0.24], frequencies: [520, 620], volume: 0.14, duration: 0.22, type: "triangle" },
+      urgent: { offsets: [0, 0.11, 0.22, 0.33], frequencies: [900, 740, 900, 740], volume: 0.28, duration: 0.1, type: "square" },
+      chime: { offsets: [0, 0.16, 0.32], frequencies: [784, 988, 1319], volume: 0.2, duration: 0.24, type: "sine" },
+    };
+
+    const pattern = patterns[sound];
     const now = context.currentTime;
-    [0, 0.18, 0.36].forEach((offset, index) => {
+    pattern.offsets.forEach((offset, index) => {
       const oscillator = context.createOscillator();
       const gain = context.createGain();
-      oscillator.type = "sine";
-      oscillator.frequency.setValueAtTime(index === 1 ? 880 : 660, now + offset);
+      oscillator.type = pattern.type;
+      oscillator.frequency.setValueAtTime(pattern.frequencies[index] ?? pattern.frequencies[0], now + offset);
       gain.gain.setValueAtTime(0.0001, now + offset);
-      gain.gain.exponentialRampToValueAtTime(0.24, now + offset + 0.02);
-      gain.gain.exponentialRampToValueAtTime(0.0001, now + offset + 0.14);
+      gain.gain.exponentialRampToValueAtTime(pattern.volume, now + offset + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + offset + pattern.duration);
       oscillator.connect(gain);
       gain.connect(context.destination);
       oscillator.start(now + offset);
-      oscillator.stop(now + offset + 0.16);
+      oscillator.stop(now + offset + pattern.duration + 0.02);
     });
+  }
+
+  function changeWakeSound(sound: WakeSoundId) {
+    setWakeSound(sound);
+    window.localStorage.setItem(WAKE_SOUND_STORAGE_KEY, sound);
+    playWakeSound(sound);
+    notify("تم تغيير صوت التنبيه.");
   }
 
   async function showBrowserNotification(title: string, body: string) {
@@ -317,7 +345,7 @@ export default function Home() {
     };
   // Realtime callback intentionally reads latest UI state and refreshes missed signals from Supabase.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [friends, profile, selectedFriend, supabase]);
+  }, [friends, profile, selectedFriend, supabase, wakeSound]);
 
   useEffect(() => {
     if (!profile) return;
@@ -951,6 +979,44 @@ export default function Home() {
                   </button>
                   <p className="mt-2 text-xs leading-5 text-white/50">أرسل هذا الكود لصديقك عشان يضيفك.</p>
                 </div>
+              </div>
+
+              <div className="rounded-[2rem] border border-white/10 bg-white/10 p-5 backdrop-blur">
+                <h3 className="mb-2 text-lg font-black">صوت التنبيه</h3>
+                <p className="mb-4 text-sm leading-6 text-white/55">
+                  اختر الصوت اللي تسمعه إذا وصلك تنبيه. الاختيار ينحفظ على هذا الجهاز.
+                </p>
+                <div className="space-y-2">
+                  {WAKE_SOUND_OPTIONS.map((option) => (
+                    <label
+                      key={option.id}
+                      className={`flex cursor-pointer items-start gap-3 rounded-2xl border p-3 transition ${
+                        wakeSound === option.id
+                          ? "border-emerald-300/60 bg-emerald-300/15"
+                          : "border-white/10 bg-black/20 hover:bg-black/30"
+                      }`}
+                    >
+                      <input
+                        className="mt-1 accent-emerald-300"
+                        type="radio"
+                        name="wake-sound"
+                        checked={wakeSound === option.id}
+                        onChange={() => changeWakeSound(option.id)}
+                      />
+                      <span>
+                        <span className="block font-black">{option.label}</span>
+                        <span className="block text-xs leading-5 text-white/55">{option.description}</span>
+                      </span>
+                    </label>
+                  ))}
+                </div>
+                <button
+                  className={`${buttonClass("ghost")} mt-4 w-full`}
+                  type="button"
+                  onClick={() => playWakeSound()}
+                >
+                  تجربة الصوت
+                </button>
               </div>
 
               <form className="rounded-[2rem] border border-white/10 bg-white/10 p-5 backdrop-blur" onSubmit={addFriend}>
