@@ -21,6 +21,20 @@ type FriendRow = {
   label: string;
 };
 
+type MissedSignal = WakeSignal & {
+  sender?: Profile;
+};
+
+function formatSignalDate(value: string) {
+  const date = new Date(value);
+  const day = String(date.getDate()).padStart(2, "0");
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const year = date.getFullYear();
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  return `${day}-${month}-${year} ${hours}:${minutes}`;
+}
+
 function usernameToEmail(username: string) {
   return `${username.toLowerCase()}@sa7i.local`;
 }
@@ -57,6 +71,7 @@ export default function Home() {
   const [outgoingRequests, setOutgoingRequests] = useState<Friendship[]>([]);
   const [selectedFriend, setSelectedFriend] = useState<FriendRow | null>(null);
   const [latestIncoming, setLatestIncoming] = useState<WakeSignal | null>(null);
+  const [missedSignals, setMissedSignals] = useState<MissedSignal[]>([]);
   const [pendingSignalCount, setPendingSignalCount] = useState(0);
   const [friendCode, setFriendCode] = useState("");
   const [friendLabel, setFriendLabel] = useState("");
@@ -129,6 +144,25 @@ export default function Home() {
     return data as Profile;
   }
 
+  async function loadMissedSignals(userId: string) {
+    const { data, error } = await supabase
+      .from("wake_signals")
+      .select("*, sender:profiles!wake_signals_sender_id_fkey(*)")
+      .eq("receiver_id", userId)
+      .is("seen_at", null)
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      notify(error.message, "error");
+      return [];
+    }
+
+    const signals = (data ?? []) as unknown as MissedSignal[];
+    setMissedSignals(signals);
+    setPendingSignalCount(signals.length);
+    return signals;
+  }
+
   async function loadEverything(userId: string) {
     const { data: myProfile, error: profileError } = await supabase
       .from("profiles")
@@ -174,15 +208,7 @@ export default function Home() {
       rows.filter((row) => row.status === "pending" && row.requester_id === userId)
     );
 
-    const { count: signalCount, error: signalCountError } = await supabase
-      .from("wake_signals")
-      .select("id", { count: "exact", head: true })
-      .eq("receiver_id", userId)
-      .is("seen_at", null);
-
-    if (!signalCountError) {
-      setPendingSignalCount(signalCount ?? 0);
-    }
+    await loadMissedSignals(userId);
   }
 
   async function loadLatestIncoming(friendId: string) {
@@ -269,7 +295,7 @@ export default function Home() {
           const sender = friends.find((friend) => friend.user.id === signal.sender_id);
           const senderName = sender?.label || sender?.user.display_name || sender?.user.username || "صديقك";
           notify(`${senderName}: ${signal.text}`, "warn");
-          setPendingSignalCount((count) => count + 1);
+          await loadMissedSignals(profile.id);
           await showBrowserNotification("Sa7i", `${senderName}: ${signal.text}`);
           if (selectedFriend?.user.id === signal.sender_id) {
             setLatestIncoming(signal);
@@ -281,6 +307,8 @@ export default function Home() {
     return () => {
       supabase.removeChannel(channel);
     };
+  // Realtime callback intentionally reads latest UI state and refreshes missed signals from Supabase.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [friends, profile, selectedFriend, supabase]);
 
   useEffect(() => {
@@ -373,6 +401,7 @@ export default function Home() {
     setIncomingRequests([]);
     setOutgoingRequests([]);
     setSelectedFriend(null);
+    setMissedSignals([]);
     setPendingSignalCount(0);
     setView("auth");
   }
@@ -463,7 +492,7 @@ export default function Home() {
           .update({ seen_at: new Date().toISOString() })
           .eq("id", latestIncoming.id);
         setLatestIncoming(null);
-        setPendingSignalCount((count) => Math.max(0, count - 1));
+        await loadMissedSignals(profile.id);
       }
 
       notify(`أرسلت: ${outgoingText}`);
@@ -475,13 +504,31 @@ export default function Home() {
   }
 
   async function dismissIncoming() {
-    if (!latestIncoming) return;
+    if (!latestIncoming || !profile) return;
     await supabase
       .from("wake_signals")
       .update({ seen_at: new Date().toISOString() })
       .eq("id", latestIncoming.id);
     setLatestIncoming(null);
-    setPendingSignalCount((count) => Math.max(0, count - 1));
+    await loadMissedSignals(profile.id);
+  }
+
+  function friendForSignal(signal: MissedSignal) {
+    return friends.find((friend) => friend.user.id === signal.sender_id) ?? null;
+  }
+
+  function senderNameForSignal(signal: MissedSignal) {
+    const friend = friendForSignal(signal);
+    return friend?.label || signal.sender?.display_name || signal.sender?.username || "صديقك";
+  }
+
+  async function openMissedSignal(signal: MissedSignal) {
+    const friend = friendForSignal(signal);
+    if (!friend) {
+      notify("ما قدرت أفتح صفحة المرسل. حدّث الصفحة وحاول مرة ثانية.", "error");
+      return;
+    }
+    await chooseFriend(friend);
   }
 
   if (loading) {
@@ -785,6 +832,33 @@ export default function Home() {
             <div className="rounded-[2rem] border border-white/10 bg-white/10 p-5 backdrop-blur sm:p-8">
               {!selectedFriend ? (
                 <div>
+                  {missedSignals.length > 0 ? (
+                    <div className="mb-6 rounded-[2rem] border border-amber-300/25 bg-amber-300/10 p-4">
+                      <div className="mb-3 flex items-center justify-between gap-3">
+                        <h2 className="text-xl font-black text-amber-100">مكالمات فائتة</h2>
+                        <span className="rounded-full bg-amber-300 px-3 py-1 text-xs font-black text-slate-950">
+                          {missedSignals.length}
+                        </span>
+                      </div>
+                      <div className="space-y-2">
+                        {missedSignals.map((signal) => (
+                          <button
+                            key={signal.id}
+                            className="w-full rounded-2xl bg-black/25 p-4 text-right transition hover:bg-black/35"
+                            onClick={() => openMissedSignal(signal)}
+                          >
+                            <div className="flex items-center justify-between gap-3">
+                              <div>
+                                <p className="font-black">{senderNameForSignal(signal)}</p>
+                                <p className="text-xs text-white/50">{formatSignalDate(signal.created_at)}</p>
+                              </div>
+                              <span className="text-2xl">{signal.text}</span>
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
                   <h2 className="mb-2 text-2xl font-black">الأصدقاء</h2>
                   <p className="mb-6 text-white/60">اختر شخص، وبعدها بتفتح صفحة فيها زر واحد فقط.</p>
                   {friends.length === 0 ? (
