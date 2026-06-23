@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-label="Sa7i icon">
+  <rect width="512" height="512" rx="116" fill="#020617"/>
+  <circle cx="256" cy="256" r="182" fill="#34d399" opacity="0.95"/>
+  <path d="M166 278c24 48 56 72 96 72 43 0 78-24 102-72" fill="none" stroke="#020617" stroke-width="32" stroke-linecap="round"/>
+  <circle cx="194" cy="208" r="24" fill="#020617"/>
+  <circle cx="318" cy="208" r="24" fill="#020617"/>
+  <path d="M256 92v42M256 378v42M92 256h42M378 256h42" stroke="#34d399" stroke-width="28" stroke-linecap="round"/>
+</svg>

@@ -1,36 +1,48 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Sa7i / صاحي
 
-## Getting Started
+تطبيق PWA بسيط جداً: تضيف صديق، وإذا ضغطت زر `صاحي ؟` يصله تنبيه صوتي داخل التطبيق، وردّه الوحيد يكون `صاحي..`.
 
-First, run the development server:
+## التقنية
+
+- Next.js 16 + React 19
+- TypeScript
+- Tailwind CSS
+- Supabase Auth + Postgres + Realtime
+- Vercel deployment
+- PWA manifest + Service Worker بسيط
+
+## التشغيل السريع
 
 ```bash
+npm install
+cp .env.example .env.local
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+املأ `.env.local` بقيم Supabase:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```env
+NEXT_PUBLIC_SUPABASE_URL=https://YOUR_PROJECT_REF.supabase.co
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=sb_publishable_xxxxxxxxx
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Supabase
 
-## Learn More
+شغّل ملف SQL:
 
-To learn more about Next.js, take a look at the following resources:
+```text
+supabase/schema.sql
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+من Supabase Dashboard → SQL Editor.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## التوثيق
 
-## Deploy on Vercel
+- [الفكرة والنطاق](docs/01-idea-and-scope.md)
+- [إعداد Supabase](docs/02-supabase-setup.md)
+- [النشر على Vercel](docs/03-vercel-deployment.md)
+- [التشغيل المحلي](docs/04-local-development.md)
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## ملاحظة مهمة
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+هذه نسخة Prototype تعليمية. إشعارات الخلفية الحقيقية على الجوال تحتاج مرحلة ثانية باستخدام Push Notifications، أما النسخة الحالية فتعطي صوت وتنبيه عندما التطبيق مفتوح/نشط.
