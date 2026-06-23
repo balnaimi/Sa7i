@@ -33,6 +33,8 @@ create table if not exists public.friendships (
   id uuid primary key default gen_random_uuid(),
   requester_id uuid not null references public.profiles(id) on delete cascade,
   addressee_id uuid not null references public.profiles(id) on delete cascade,
+  requester_label text,
+  addressee_label text,
   status text not null default 'pending' check (status in ('pending', 'accepted', 'blocked')),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
@@ -41,6 +43,10 @@ create table if not exists public.friendships (
 
 create unique index if not exists friendships_one_pair_idx
 on public.friendships (least(requester_id, addressee_id), greatest(requester_id, addressee_id));
+
+alter table public.friendships
+add column if not exists requester_label text,
+add column if not exists addressee_label text;
 
 create table if not exists public.wake_signals (
   id uuid primary key default gen_random_uuid(),

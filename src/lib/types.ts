@@ -12,6 +12,8 @@ export type Friendship = {
   id: string;
   requester_id: string;
   addressee_id: string;
+  requester_label: string | null;
+  addressee_label: string | null;
   status: FriendshipStatus;
   created_at: string;
   updated_at: string;

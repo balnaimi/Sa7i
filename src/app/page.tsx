@@ -13,6 +13,7 @@ type Toast = { tone: ToastTone; message: string } | null;
 type FriendRow = {
   friendshipId: string;
   user: Profile;
+  label: string;
 };
 
 function usernameToEmail(username: string) {
@@ -49,10 +50,12 @@ export default function Home() {
   const [friends, setFriends] = useState<FriendRow[]>([]);
   const [incomingRequests, setIncomingRequests] = useState<Friendship[]>([]);
   const [outgoingRequests, setOutgoingRequests] = useState<Friendship[]>([]);
-  const [selectedFriend, setSelectedFriend] = useState<Profile | null>(null);
+  const [selectedFriend, setSelectedFriend] = useState<FriendRow | null>(null);
   const [latestIncoming, setLatestIncoming] = useState<WakeSignal | null>(null);
   const [pendingSignalCount, setPendingSignalCount] = useState(0);
   const [friendCode, setFriendCode] = useState("");
+  const [friendLabel, setFriendLabel] = useState("");
+  const [acceptLabels, setAcceptLabels] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState<Toast>(null);
@@ -134,7 +137,7 @@ export default function Home() {
     const { data: friendships, error: friendsError } = await supabase
       .from("friendships")
       .select(
-        "id, requester_id, addressee_id, status, created_at, updated_at, requester:profiles!friendships_requester_id_fkey(*), addressee:profiles!friendships_addressee_id_fkey(*)"
+        "id, requester_id, addressee_id, requester_label, addressee_label, status, created_at, updated_at, requester:profiles!friendships_requester_id_fkey(*), addressee:profiles!friendships_addressee_id_fkey(*)"
       )
       .or(`requester_id.eq.${userId},addressee_id.eq.${userId}`)
       .order("updated_at", { ascending: false });
@@ -145,10 +148,19 @@ export default function Home() {
     setFriends(
       rows
         .filter((row) => row.status === "accepted")
-        .map((row) => ({
-          friendshipId: row.id,
-          user: row.requester_id === userId ? row.addressee! : row.requester!,
-        }))
+        .map((row) => {
+          const isRequester = row.requester_id === userId;
+          const user = isRequester ? row.addressee! : row.requester!;
+          const label = (isRequester ? row.requester_label : row.addressee_label) ||
+            user.display_name ||
+            user.username;
+
+          return {
+            friendshipId: row.id,
+            user,
+            label,
+          };
+        })
     );
     setIncomingRequests(
       rows.filter((row) => row.status === "pending" && row.addressee_id === userId)
@@ -187,9 +199,9 @@ export default function Home() {
     return data as WakeSignal | null;
   }
 
-  async function chooseFriend(friend: Profile) {
+  async function chooseFriend(friend: FriendRow) {
     setSelectedFriend(friend);
-    setLatestIncoming(await loadLatestIncoming(friend.id));
+    setLatestIncoming(await loadLatestIncoming(friend.user.id));
   }
 
   useEffect(() => {
@@ -248,12 +260,12 @@ export default function Home() {
         async (payload) => {
           const signal = payload.new as WakeSignal;
           playWakeSound();
-          const sender = friends.find((friend) => friend.user.id === signal.sender_id)?.user;
-          const senderName = sender?.display_name || sender?.username || "صديقك";
+          const sender = friends.find((friend) => friend.user.id === signal.sender_id);
+          const senderName = sender?.label || sender?.user.display_name || sender?.user.username || "صديقك";
           notify(`${senderName}: ${signal.text}`, "warn");
           setPendingSignalCount((count) => count + 1);
           await showBrowserNotification("Sa7i", `${senderName}: ${signal.text}`);
-          if (selectedFriend?.id === signal.sender_id) {
+          if (selectedFriend?.user.id === signal.sender_id) {
             setLatestIncoming(signal);
           }
         }
@@ -382,13 +394,16 @@ export default function Home() {
         .single();
       if (targetError) throw new Error("ما حصلت حساب بهذا الكود.");
 
+      const label = friendLabel.trim() || (target as Profile).display_name || (target as Profile).username;
       const { error } = await supabase.from("friendships").insert({
         requester_id: profile.id,
         addressee_id: (target as Profile).id,
+        requester_label: label,
       });
       if (error) throw error;
 
       setFriendCode("");
+      setFriendLabel("");
       await loadEverything(profile.id);
       notify("تم إرسال طلب الإضافة.");
     } catch (error) {
@@ -398,17 +413,24 @@ export default function Home() {
     }
   }
 
-  async function acceptFriendship(friendshipId: string) {
+  async function acceptFriendship(friendship: Friendship) {
     if (!profile) return;
+    const defaultLabel = friendship.requester?.display_name || friendship.requester?.username || "صديقي";
+    const label = acceptLabels[friendship.id]?.trim() || defaultLabel;
     setBusy(true);
     try {
       const { error } = await supabase
         .from("friendships")
-        .update({ status: "accepted" })
-        .eq("id", friendshipId);
+        .update({ status: "accepted", addressee_label: label })
+        .eq("id", friendship.id);
       if (error) throw error;
       await loadEverything(profile.id);
       notify("قبلت طلب الإضافة.");
+      setAcceptLabels((labels) => {
+        const next = { ...labels };
+        delete next[friendship.id];
+        return next;
+      });
     } catch (error) {
       notify(error instanceof Error ? error.message : "تعذر قبول الطلب.", "error");
     } finally {
@@ -423,7 +445,7 @@ export default function Home() {
       const isReply = Boolean(latestIncoming);
       const { error } = await supabase.from("wake_signals").insert({
         sender_id: profile.id,
-        receiver_id: selectedFriend.id,
+        receiver_id: selectedFriend.user.id,
         text: isReply ? "صاحي.." : "صاحي ؟",
       });
       if (error) throw error;
@@ -603,6 +625,13 @@ export default function Home() {
                   maxLength={8}
                   dir="ltr"
                 />
+                <input
+                  className="mb-3 w-full rounded-2xl border border-white/10 bg-slate-950/70 px-4 py-3 text-white outline-none ring-emerald-300/50 focus:ring-4"
+                  value={friendLabel}
+                  onChange={(event) => setFriendLabel(event.target.value)}
+                  placeholder="الاسم اللي بيظهر عندك لهذا الشخص"
+                  maxLength={40}
+                />
                 <button className={`${buttonClass()} w-full`} disabled={busy}>
                   إرسال طلب
                 </button>
@@ -617,9 +646,18 @@ export default function Home() {
                     {incomingRequests.map((request) => (
                       <div key={request.id} className="rounded-2xl bg-black/20 p-3">
                         <p className="font-bold">@{request.requester?.username}</p>
+                        <input
+                          className="mt-3 w-full rounded-xl border border-white/10 bg-slate-950/70 px-3 py-2 text-sm text-white outline-none ring-emerald-300/50 focus:ring-4"
+                          value={acceptLabels[request.id] ?? ""}
+                          onChange={(event) =>
+                            setAcceptLabels((labels) => ({ ...labels, [request.id]: event.target.value }))
+                          }
+                          placeholder={`سمّه عندك: ${request.requester?.display_name || request.requester?.username || "صديقي"}`}
+                          maxLength={40}
+                        />
                         <button
                           className={`${buttonClass()} mt-3 w-full py-2`}
-                          onClick={() => acceptFriendship(request.id)}
+                          onClick={() => acceptFriendship(request)}
                           disabled={busy}
                         >
                           قبول
@@ -659,9 +697,9 @@ export default function Home() {
                         <button
                           key={friend.friendshipId}
                           className="rounded-3xl border border-white/10 bg-slate-950/60 p-5 text-right transition hover:-translate-y-1 hover:border-emerald-300/40 hover:bg-slate-900"
-                          onClick={() => chooseFriend(friend.user)}
+                          onClick={() => chooseFriend(friend)}
                         >
-                          <p className="text-xl font-black">{friend.user.display_name || friend.user.username}</p>
+                          <p className="text-xl font-black">{friend.label}</p>
                           <p className="text-sm text-emerald-300">@{friend.user.username}</p>
                         </button>
                       ))}
@@ -675,8 +713,8 @@ export default function Home() {
                   </button>
 
                   <div className="text-center">
-                    <p className="mb-3 text-white/60">إلى @{selectedFriend.username}</p>
-                    <h2 className="mb-10 text-4xl font-black">{selectedFriend.display_name || selectedFriend.username}</h2>
+                    <p className="mb-3 text-white/60">إلى @{selectedFriend.user.username}</p>
+                    <h2 className="mb-10 text-4xl font-black">{selectedFriend.label}</h2>
                     <button
                       className="h-56 w-56 rounded-full bg-emerald-400 text-4xl font-black text-slate-950 shadow-[0_0_80px_rgba(52,211,153,0.45)] transition hover:scale-105 active:scale-95 disabled:opacity-60 sm:h-72 sm:w-72 sm:text-5xl"
                       onClick={sendWakeSignal}
