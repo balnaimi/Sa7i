@@ -100,6 +100,46 @@ function notificationTextForSignal(senderName: string, text: WakeSignalText) {
   return `${senderName}: ${text}`;
 }
 
+function signalDisplayLabel(text: WakeSignalText) {
+  if (text === "✅") return "رد بالموافقة";
+  if (text === "❌") return "رد بالرفض";
+  return text;
+}
+
+function replyToneClass(text?: WakeSignalText) {
+  if (text === "❌") return "bg-rose-500 text-white shadow-[0_0_90px_rgba(244,63,94,0.38)]";
+  return "bg-emerald-400 text-slate-950 shadow-[0_0_90px_rgba(52,211,153,0.45)]";
+}
+
+function ReplyStatusIcon({ text, className = "h-10 w-10" }: { text: WakeSignalText; className?: string }) {
+  if (text === "✅") {
+    return (
+      <svg className={className} viewBox="0 0 24 24" aria-hidden="true" fill="none">
+        <path
+          d="M20 6 9 17l-5-5"
+          stroke="currentColor"
+          strokeWidth="2.8"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
+    );
+  }
+  if (text === "❌") {
+    return (
+      <svg className={className} viewBox="0 0 24 24" aria-hidden="true" fill="none">
+        <path
+          d="M6.5 6.5 17.5 17.5M17.5 6.5 6.5 17.5"
+          stroke="currentColor"
+          strokeWidth="2.8"
+          strokeLinecap="round"
+        />
+      </svg>
+    );
+  }
+  return <span>{text}</span>;
+}
+
 function usernameToEmail(username: string) {
   return `${username.toLowerCase()}@sa7i.local`;
 }
@@ -971,7 +1011,8 @@ export default function Home() {
 
   if (selectedFriend) {
     const incomingEmoji = latestIncoming && isEmojiReply(latestIncoming.text);
-    const buttonText = latestIncoming ? (incomingEmoji ? latestIncoming.text : "صاحي..") : "صاحي ؟";
+    const buttonText = latestIncoming ? (incomingEmoji ? signalDisplayLabel(latestIncoming.text) : "صاحي..") : "صاحي ؟";
+    const mainButtonClass = incomingEmoji ? replyToneClass(latestIncoming.text) : "bg-emerald-400 text-slate-950 shadow-[0_0_90px_rgba(52,211,153,0.45)] hover:scale-105";
 
     return (
       <main className={`min-h-screen overflow-hidden ${themeClass} text-white`} dir="rtl">
@@ -1018,44 +1059,49 @@ export default function Home() {
               </div>
 
               <button
-                className={`h-64 w-64 rounded-full text-5xl font-black shadow-[0_0_90px_rgba(52,211,153,0.45)] transition active:scale-95 disabled:opacity-80 sm:h-80 sm:w-80 sm:text-6xl ${
-                  incomingEmoji
-                    ? "bg-white text-slate-950"
-                    : "bg-emerald-400 text-slate-950 hover:scale-105"
-                }`}
+                className={`grid h-64 w-64 place-items-center rounded-full text-5xl font-black transition active:scale-95 disabled:opacity-80 sm:h-80 sm:w-80 sm:text-6xl ${mainButtonClass}`}
                 onClick={incomingEmoji ? dismissIncoming : () => sendWakeSignal()}
                 disabled={busy}
-                aria-label={incomingEmoji ? "تم استلام الرد" : "إرسال تنبيه"}
+                aria-label={incomingEmoji ? buttonText : "إرسال تنبيه"}
               >
-                {buttonText}
+                {incomingEmoji && latestIncoming ? (
+                  <span className="flex flex-col items-center gap-4">
+                    <ReplyStatusIcon text={latestIncoming.text} className="h-24 w-24 sm:h-28 sm:w-28" />
+                    <span className="text-base font-black sm:text-lg">{buttonText}</span>
+                  </span>
+                ) : (
+                  buttonText
+                )}
               </button>
 
               {latestIncoming && !incomingEmoji ? (
                 <div className="mt-8 flex justify-center gap-3">
                   <button
-                    className="rounded-3xl bg-white px-8 py-5 text-4xl shadow-lg transition hover:scale-105 active:scale-95 disabled:opacity-60"
+                    className="grid h-20 w-24 place-items-center rounded-3xl bg-emerald-400 text-slate-950 shadow-lg shadow-emerald-400/25 transition hover:scale-105 active:scale-95 disabled:opacity-60"
                     onClick={() => sendWakeSignal("✅")}
                     disabled={busy}
-                    aria-label="OK"
+                    aria-label="رد بالموافقة"
+                    title="رد بالموافقة"
                   >
-                    ✅
+                    <ReplyStatusIcon text="✅" className="h-10 w-10" />
                   </button>
                   <button
-                    className="rounded-3xl bg-white px-8 py-5 text-4xl shadow-lg transition hover:scale-105 active:scale-95 disabled:opacity-60"
+                    className="grid h-20 w-24 place-items-center rounded-3xl bg-rose-500 text-white shadow-lg shadow-rose-500/25 transition hover:scale-105 active:scale-95 disabled:opacity-60"
                     onClick={() => sendWakeSignal("❌")}
                     disabled={busy}
-                    aria-label="Not OK"
+                    aria-label="رد بالرفض"
+                    title="رد بالرفض"
                   >
-                    ❌
+                    <ReplyStatusIcon text="❌" className="h-10 w-10" />
                   </button>
                 </div>
               ) : null}
 
               <p className="mx-auto mt-8 max-w-md text-sm leading-7 text-white/55">
                 {incomingEmoji
-                  ? "هذا رد سريع من صديقك. اضغط على الإيموجي لإخفائه."
+                  ? "هذا رد سريع من صديقك. اضغط على الأيقونة لإخفائها."
                   : latestIncoming
-                    ? "وصلك تنبيه من هذا الشخص. رد بزر صاحي.. أو رد سريع بإيموجي."
+                    ? "وصلك تنبيه من هذا الشخص. رد بزر صاحي.. أو رد سريع بأيقونة."
                     : "اضغط الزر، وبيوصل للطرف الثاني صوت وتنبيه داخل التطبيق."}
               </p>
             </div>
@@ -1242,7 +1288,12 @@ export default function Home() {
                       <p className="text-xl font-black">{friend.label}</p>
                       <p className="text-sm text-emerald-300">@{friend.user.username}</p>
                       <div className="mt-4 flex items-center justify-between gap-2 rounded-2xl bg-black/20 px-3 py-2 text-xs text-white/60">
-                        <span>{friend.lastSignal ? `آخر تفاعل: ${friend.lastSignal.text}` : "لا يوجد نشاط"}</span>
+                        <span className="flex items-center gap-2">
+                          {friend.lastSignal && isEmojiReply(friend.lastSignal.text) ? (
+                            <ReplyStatusIcon text={friend.lastSignal.text} className="h-4 w-4 text-emerald-200" />
+                          ) : null}
+                          <span>{friend.lastSignal ? `آخر تفاعل: ${signalDisplayLabel(friend.lastSignal.text)}` : "لا يوجد نشاط"}</span>
+                        </span>
                         <span>{formatRelativeTime(friend.lastSignal?.created_at)}</span>
                       </div>
                       {mutedFriendIds.includes(friend.user.id) ? (
@@ -1289,7 +1340,13 @@ export default function Home() {
                           <p className="font-black">{senderNameForSignal(signal)}</p>
                           <p className="text-xs text-white/50">{formatSignalDate(signal.created_at)}</p>
                         </div>
-                        <span className="text-3xl">{signal.text}</span>
+                        {isEmojiReply(signal.text) ? (
+                          <span className={`grid h-12 w-12 place-items-center rounded-2xl ${replyToneClass(signal.text)}`}>
+                            <ReplyStatusIcon text={signal.text} className="h-7 w-7" />
+                          </span>
+                        ) : (
+                          <span className="text-xl font-black text-emerald-200">{signal.text}</span>
+                        )}
                       </div>
                     </button>
                   ))}
