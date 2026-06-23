@@ -6,7 +6,7 @@ import type { Friendship, Profile, WakeSignal, WakeSignalText } from "@/lib/type
 
 const USERNAME_RE = /^[a-zA-Z0-9_]{3,24}$/;
 
-type View = "auth" | "home" | "settings" | "missed";
+type View = "auth" | "home" | "invites" | "settings" | "missed";
 type ToastTone = "ok" | "warn" | "error";
 type Toast = { tone: ToastTone; message: string } | null;
 type WakeSoundId = "classic" | "soft" | "urgent" | "chime";
@@ -899,6 +899,9 @@ export default function Home() {
               <button className={buttonClass(view === "missed" ? "primary" : "ghost")} onClick={() => setView("missed")}>
                 تنبيهات فائتة {pendingSignalCount > 0 ? `(${pendingSignalCount})` : ""}
               </button>
+              <button className={buttonClass(view === "invites" ? "primary" : "ghost")} onClick={() => setView("invites")}>
+                الإضافة {incomingRequests.length > 0 ? `(${incomingRequests.length})` : ""}
+              </button>
               <button className={buttonClass(view === "settings" ? "primary" : "ghost")} onClick={() => setView("settings")}>
                 الإعدادات
               </button>
@@ -1107,21 +1110,9 @@ export default function Home() {
                 <p className="text-sm text-white/60">داخل باسم</p>
                 <h2 className="text-2xl font-black">{profile?.display_name || profile?.username}</h2>
                 <p className="text-sm text-emerald-300">@{profile?.username}</p>
-                <div className="mt-4 rounded-2xl border border-emerald-300/20 bg-emerald-300/10 p-4">
-                  <p className="text-xs text-white/60">كود الإضافة الخاص فيك</p>
-                  <button
-                    className="mt-2 w-full rounded-xl bg-slate-950/70 px-4 py-3 font-mono text-2xl font-black tracking-[0.35em] text-emerald-200"
-                    onClick={async () => {
-                      if (!profile?.invite_code) return;
-                      await navigator.clipboard?.writeText(profile.invite_code);
-                      notify("تم نسخ كود الإضافة.");
-                    }}
-                    title="اضغط لنسخ الكود"
-                  >
-                    {profile?.invite_code}
-                  </button>
-                  <p className="mt-2 text-xs leading-5 text-white/50">أرسل هذا الكود لصديقك عشان يضيفك.</p>
-                </div>
+                <p className="mt-4 text-sm leading-6 text-white/55">
+                  معلومات الحساب والتنبيهات الخاصة بهذا الجهاز. الإضافة وطلبات الصداقة نقلناها لتاب مستقل عشان الصفحة تبقى خفيفة.
+                </p>
               </div>
 
               <div className="rounded-[2rem] border border-white/10 bg-white/10 p-5 backdrop-blur">
@@ -1146,7 +1137,9 @@ export default function Home() {
                   </p>
                 ) : null}
               </div>
+            </div>
 
+            <div className="space-y-5">
               <div className="rounded-[2rem] border border-white/10 bg-white/10 p-5 backdrop-blur">
                 <h3 className="mb-2 text-lg font-black">صوت التنبيه</h3>
                 <p className="mb-4 text-sm leading-6 text-white/55">
@@ -1184,6 +1177,34 @@ export default function Home() {
                   تجربة الصوت
                 </button>
               </div>
+            </div>
+          </section>
+        ) : null}
+
+        {view === "invites" ? (
+          <section className="grid flex-1 gap-5 py-8 lg:grid-cols-2">
+            <div className="space-y-5">
+              <div className="rounded-[2rem] border border-white/10 bg-white/10 p-5 backdrop-blur">
+                <h2 className="mb-2 text-2xl font-black">الإضافة والدعوات</h2>
+                <p className="text-sm leading-6 text-white/55">
+                  هنا كل شيء يخص إضافة الأصدقاء: كودك، إرسال طلب، قبول أو رفض الدعوات.
+                </p>
+                <div className="mt-4 rounded-2xl border border-emerald-300/20 bg-emerald-300/10 p-4">
+                  <p className="text-xs text-white/60">كود الإضافة الخاص فيك</p>
+                  <button
+                    className="mt-2 w-full rounded-xl bg-slate-950/70 px-4 py-3 font-mono text-2xl font-black tracking-[0.35em] text-emerald-200"
+                    onClick={async () => {
+                      if (!profile?.invite_code) return;
+                      await navigator.clipboard?.writeText(profile.invite_code);
+                      notify("تم نسخ كود الإضافة.");
+                    }}
+                    title="اضغط لنسخ الكود"
+                  >
+                    {profile?.invite_code}
+                  </button>
+                  <p className="mt-2 text-xs leading-5 text-white/50">أرسل هذا الكود لصديقك عشان يضيفك.</p>
+                </div>
+              </div>
 
               <form className="rounded-[2rem] border border-white/10 bg-white/10 p-5 backdrop-blur" onSubmit={addFriend}>
                 <h3 className="mb-4 text-lg font-black">إضافة شخص بالكود</h3>
@@ -1211,7 +1232,7 @@ export default function Home() {
 
             <div className="space-y-5">
               <div className="rounded-[2rem] border border-white/10 bg-white/10 p-5 backdrop-blur">
-                <h3 className="mb-4 text-lg font-black">طلبات واردة</h3>
+                <h3 className="mb-4 text-lg font-black">طلبات واردة {incomingRequests.length > 0 ? `(${incomingRequests.length})` : ""}</h3>
                 {incomingRequests.length === 0 ? (
                   <p className="text-sm text-white/50">ما فيه طلبات حالياً.</p>
                 ) : (
@@ -1269,6 +1290,7 @@ export default function Home() {
             </div>
           </section>
         ) : null}
+
       </div>
     </main>
   );
