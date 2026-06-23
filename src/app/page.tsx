@@ -35,6 +35,13 @@ function formatSignalDate(value: string) {
   return `${day}-${month}-${year} ${hours}:${minutes}`;
 }
 
+function notificationTextForSignal(senderName: string, text: WakeSignalText) {
+  if (isEmojiReply(text)) {
+    return `${senderName}: وصلك رد سريع`;
+  }
+  return `${senderName}: ${text}`;
+}
+
 function usernameToEmail(username: string) {
   return `${username.toLowerCase()}@sa7i.local`;
 }
@@ -294,9 +301,10 @@ export default function Home() {
           playWakeSound();
           const sender = friends.find((friend) => friend.user.id === signal.sender_id);
           const senderName = sender?.label || sender?.user.display_name || sender?.user.username || "صديقك";
-          notify(`${senderName}: ${signal.text}`, "warn");
+          const notificationText = notificationTextForSignal(senderName, signal.text);
+          notify(notificationText, "warn");
           await loadMissedSignals(profile.id);
-          await showBrowserNotification("Sa7i", `${senderName}: ${signal.text}`);
+          await showBrowserNotification("Sa7i", notificationText);
           if (selectedFriend?.user.id === signal.sender_id) {
             setLatestIncoming(signal);
           }
@@ -835,7 +843,7 @@ export default function Home() {
                   {missedSignals.length > 0 ? (
                     <div className="mb-6 rounded-[2rem] border border-amber-300/25 bg-amber-300/10 p-4">
                       <div className="mb-3 flex items-center justify-between gap-3">
-                        <h2 className="text-xl font-black text-amber-100">مكالمات فائتة</h2>
+                        <h2 className="text-xl font-black text-amber-100">تنبيهات فائتة</h2>
                         <span className="rounded-full bg-amber-300 px-3 py-1 text-xs font-black text-slate-950">
                           {missedSignals.length}
                         </span>
