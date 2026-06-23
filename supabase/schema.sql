@@ -61,6 +61,20 @@ create table if not exists public.wake_signals (
 create index if not exists wake_signals_receiver_created_idx
 on public.wake_signals (receiver_id, created_at desc);
 
+create table if not exists public.push_subscriptions (
+  id uuid primary key default gen_random_uuid(),
+  profile_id uuid not null references public.profiles(id) on delete cascade,
+  endpoint text not null unique,
+  p256dh text not null,
+  auth text not null,
+  user_agent text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists push_subscriptions_profile_idx
+on public.push_subscriptions (profile_id);
+
 create or replace function public.set_updated_at()
 returns trigger
 language plpgsql
@@ -75,6 +89,11 @@ $$;
 drop trigger if exists set_friendships_updated_at on public.friendships;
 create trigger set_friendships_updated_at
 before update on public.friendships
+for each row execute function public.set_updated_at();
+
+drop trigger if exists set_push_subscriptions_updated_at on public.push_subscriptions;
+create trigger set_push_subscriptions_updated_at
+before update on public.push_subscriptions
 for each row execute function public.set_updated_at();
 
 create or replace function public.handle_new_user()
@@ -112,6 +131,7 @@ for each row execute function public.handle_new_user();
 alter table public.profiles enable row level security;
 alter table public.friendships enable row level security;
 alter table public.wake_signals enable row level security;
+alter table public.push_subscriptions enable row level security;
 
 -- تنظيف السياسات لو تعيد تشغيل الملف أثناء التعلم.
 drop policy if exists "profiles are readable by signed in users" on public.profiles;
@@ -124,6 +144,7 @@ drop policy if exists "participants can delete pending friendship" on public.fri
 drop policy if exists "wake signals readable by sender or receiver" on public.wake_signals;
 drop policy if exists "friends can send wake signals" on public.wake_signals;
 drop policy if exists "receiver can mark signal as seen" on public.wake_signals;
+drop policy if exists "users can manage own push subscriptions" on public.push_subscriptions;
 
 create policy "profiles are readable by signed in users"
 on public.profiles for select
@@ -191,6 +212,12 @@ on public.wake_signals for update
 to authenticated
 using (auth.uid() = receiver_id)
 with check (auth.uid() = receiver_id);
+
+create policy "users can manage own push subscriptions"
+on public.push_subscriptions for all
+to authenticated
+using (auth.uid() = profile_id)
+with check (auth.uid() = profile_id);
 
 -- تفعيل Realtime على جداول الطلبات والتنبيهات.
 do $$

@@ -12,6 +12,7 @@ type Toast = { tone: ToastTone; message: string } | null;
 type WakeSoundId = "classic" | "soft" | "urgent" | "chime";
 const EMOJI_REPLIES: WakeSignalText[] = ["✅", "❌"];
 const WAKE_SOUND_STORAGE_KEY = "sa7i:wake-sound";
+const PUBLIC_VAPID_KEY = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
 const WAKE_SOUND_OPTIONS: { id: WakeSoundId; label: string; description: string }[] = [
   { id: "classic", label: "التنبيه الأساسي", description: "ثلاث نغمات واضحة مثل الحالي." },
   { id: "soft", label: "هادئ", description: "نغمة خفيفة وأقل إزعاجاً." },
@@ -58,6 +59,21 @@ function normalizeUsername(username: string) {
   return username.trim().toLowerCase();
 }
 
+function urlBase64ToUint8Array(value: string) {
+  const padding = "=".repeat((4 - (value.length % 4)) % 4);
+  const base64 = (value + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const raw = window.atob(base64);
+  return Uint8Array.from([...raw].map((char) => char.charCodeAt(0)));
+}
+
+function subscriptionKeys(subscription: PushSubscription) {
+  const json = subscription.toJSON();
+  return {
+    p256dh: json.keys?.p256dh ?? "",
+    auth: json.keys?.auth ?? "",
+  };
+}
+
 function buttonClass(variant: "primary" | "ghost" | "danger" = "primary") {
   const base =
     "rounded-2xl px-5 py-3 text-sm font-bold transition active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-60";
@@ -96,6 +112,7 @@ export default function Home() {
     const savedSound = window.localStorage.getItem(WAKE_SOUND_STORAGE_KEY);
     return WAKE_SOUND_OPTIONS.some((option) => option.id === savedSound) ? (savedSound as WakeSoundId) : "classic";
   });
+  const [pushEnabled, setPushEnabled] = useState(false);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState<Toast>(null);
@@ -156,6 +173,55 @@ export default function Home() {
         badge: "/icons/icon-192.svg",
         dir: "rtl",
       });
+    }
+  }
+
+  async function enableSystemNotifications() {
+    if (!profile) return;
+    if (!PUBLIC_VAPID_KEY) {
+      notify("أضف NEXT_PUBLIC_VAPID_PUBLIC_KEY في Vercel/.env أولاً.", "error");
+      return;
+    }
+    if (!("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window)) {
+      notify("هذا المتصفح ما يدعم تنبيهات النظام للـ PWA.", "error");
+      return;
+    }
+
+    setBusy(true);
+    try {
+      const permission = await Notification.requestPermission();
+      if (permission !== "granted") {
+        notify("لازم تسمح للتنبيهات من إعدادات المتصفح/النظام.", "error");
+        return;
+      }
+
+      const registration = await navigator.serviceWorker.ready;
+      const existing = await registration.pushManager.getSubscription();
+      const subscription = existing ?? await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(PUBLIC_VAPID_KEY),
+      });
+      const keys = subscriptionKeys(subscription);
+      if (!keys.p256dh || !keys.auth) throw new Error("تعذر قراءة مفاتيح الاشتراك.");
+
+      const { error } = await supabase.from("push_subscriptions").upsert(
+        {
+          profile_id: profile.id,
+          endpoint: subscription.endpoint,
+          p256dh: keys.p256dh,
+          auth: keys.auth,
+          user_agent: navigator.userAgent,
+        },
+        { onConflict: "endpoint" }
+      );
+      if (error) throw error;
+
+      setPushEnabled(true);
+      notify("تم تفعيل تنبيهات النظام لهذا الجهاز.");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "تعذر تفعيل تنبيهات النظام.", "error");
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -278,6 +344,14 @@ export default function Home() {
       });
     }
   }, []);
+
+  useEffect(() => {
+    if (!profile || !("serviceWorker" in navigator) || !("PushManager" in window)) return;
+    navigator.serviceWorker.ready
+      .then((registration) => registration.pushManager.getSubscription())
+      .then((subscription) => setPushEnabled(Boolean(subscription)))
+      .catch(() => setPushEnabled(false));
+  }, [profile]);
 
   useEffect(() => {
     let mounted = true;
@@ -583,12 +657,22 @@ export default function Home() {
     try {
       const isReply = Boolean(latestIncoming) && !isEmojiReply(latestIncoming!.text);
       const outgoingText = text ?? (isReply ? "صاحي.." : "صاحي ؟");
-      const { error } = await supabase.from("wake_signals").insert({
-        sender_id: profile.id,
-        receiver_id: selectedFriend.user.id,
-        text: outgoingText,
-      });
+      const { data: sentSignal, error } = await supabase
+        .from("wake_signals")
+        .insert({
+          sender_id: profile.id,
+          receiver_id: selectedFriend.user.id,
+          text: outgoingText,
+        })
+        .select("id")
+        .single();
       if (error) throw error;
+
+      supabase.functions.invoke("send-signal-push", {
+        body: { signal_id: sentSignal.id },
+      }).catch(() => {
+        // النظام داخل التطبيق يظل يعمل حتى لو فشل Push في الخلفية.
+      });
 
       if (latestIncoming) {
         await supabase
@@ -979,6 +1063,21 @@ export default function Home() {
                   </button>
                   <p className="mt-2 text-xs leading-5 text-white/50">أرسل هذا الكود لصديقك عشان يضيفك.</p>
                 </div>
+              </div>
+
+              <div className="rounded-[2rem] border border-white/10 bg-white/10 p-5 backdrop-blur">
+                <h3 className="mb-2 text-lg font-black">تنبيهات النظام</h3>
+                <p className="mb-4 text-sm leading-6 text-white/55">
+                  فعلها عشان توصلك تنبيهات PWA من النظام حتى لو صفحة التطبيق مو مفتوحة.
+                </p>
+                <button className={`${buttonClass(pushEnabled ? "ghost" : "primary")} w-full`} onClick={enableSystemNotifications} disabled={busy}>
+                  {pushEnabled ? "تنبيهات النظام مفعلة على هذا الجهاز" : "تفعيل تنبيهات النظام"}
+                </button>
+                {!PUBLIC_VAPID_KEY ? (
+                  <p className="mt-3 text-xs leading-5 text-amber-200">
+                    يحتاج إعداد VAPID في Vercel/Supabase قبل ما يشتغل على النسخة المنشورة.
+                  </p>
+                ) : null}
               </div>
 
               <div className="rounded-[2rem] border border-white/10 bg-white/10 p-5 backdrop-blur">
