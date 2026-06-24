@@ -4,6 +4,19 @@ All notable changes to Sa7i are documented here.
 
 Sa7i follows semantic versioning: `MAJOR.MINOR.PATCH`.
 
+## [0.4.0] - 2026-06-24
+
+### Added
+- Group invitations: added friends must accept or reject before entering a group, including invitations sent later by the creator.
+- Neutral group state so members can clear their previous `صح` / `لا` choice back to `بدون قرار`.
+- Group membership controls: members can leave groups, and group creators can remove other members.
+- Friend removal from the friends list.
+
+### Changed
+- Redesigned the groups area into `قروباتي`, `إنشاء قروب`, and `دعوات القروبات` tabs to keep long lists contained.
+- Compressed the friends list into expandable rows with contextual actions instead of always-visible edit controls.
+- Made group wording generic for any topic instead of attendance-only language.
+
 ## [0.3.2] - 2026-06-24
 
 ### Fixed

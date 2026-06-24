@@ -33,6 +33,7 @@ export type WakeSignal = {
 };
 
 export type GroupResponse = "yes" | "no" | null;
+export type GroupMembershipStatus = "invited" | "accepted";
 
 export type Sa7iGroup = {
   id: string;
@@ -47,6 +48,7 @@ export type GroupMember = {
   group_id: string;
   profile_id: string;
   added_by: string;
+  membership_status: GroupMembershipStatus;
   response: GroupResponse;
   responded_at: string | null;
   created_at: string;

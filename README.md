@@ -6,7 +6,7 @@ Sa7i is a simple Arabic-first PWA for sending a one-button signal between accept
 - Main signal: `صاحي ؟`
 - Reply signal: `صاحي..`
 - Optional PWA push notifications with quiet hours and per-device mute settings.
-- Topical groups for quickly confirming who is in or out with yes/no status cards.
+- Topical groups with invitations, yes/no/neutral status cards, and membership controls.
 - Built with Next.js, React, TypeScript, Tailwind CSS, and Supabase.
 
 ## Development

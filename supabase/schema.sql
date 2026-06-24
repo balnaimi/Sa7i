@@ -79,6 +79,7 @@ create table if not exists public.group_members (
   group_id uuid not null references public.groups(id) on delete cascade,
   profile_id uuid not null references public.profiles(id) on delete cascade,
   added_by uuid not null references public.profiles(id) on delete cascade,
+  membership_status text not null default 'invited' check (membership_status in ('invited', 'accepted')),
   response text check (response in ('yes', 'no')),
   responded_at timestamptz,
   created_at timestamptz not null default now(),
@@ -93,6 +94,13 @@ on public.group_members (profile_id, created_at desc);
 
 create index if not exists group_members_group_idx
 on public.group_members (group_id);
+
+alter table public.group_members
+add column if not exists membership_status text not null default 'accepted'
+check (membership_status in ('invited', 'accepted'));
+
+create index if not exists group_members_status_profile_idx
+on public.group_members (membership_status, profile_id, created_at desc);
 
 create or replace function public.set_updated_at()
 returns trigger
@@ -215,6 +223,8 @@ drop policy if exists "group creators can update groups" on public.groups;
 drop policy if exists "group members can read group members" on public.group_members;
 drop policy if exists "group creators can add accepted friends" on public.group_members;
 drop policy if exists "members can update own group response" on public.group_members;
+drop policy if exists "members can leave or creator can remove members" on public.group_members;
+drop policy if exists "participants can delete accepted friendship" on public.friendships;
 
 create policy "profiles are readable by signed in users"
 on public.profiles for select
@@ -265,6 +275,14 @@ on public.friendships for delete
 to authenticated
 using (
   status = 'pending'
+  and (auth.uid() = requester_id or auth.uid() = addressee_id)
+);
+
+create policy "participants can delete accepted friendship"
+on public.friendships for delete
+to authenticated
+using (
+  status = 'accepted'
   and (auth.uid() = requester_id or auth.uid() = addressee_id)
 );
 
@@ -332,15 +350,18 @@ with check (
   auth.uid() = added_by
   and private.is_group_creator(group_id, auth.uid())
   and (
-    profile_id = auth.uid()
-    or exists (
-      select 1
-      from public.friendships f
-      where f.status = 'accepted'
-        and (
-          (f.requester_id = auth.uid() and f.addressee_id = profile_id)
-          or (f.addressee_id = auth.uid() and f.requester_id = profile_id)
-        )
+    (profile_id = auth.uid() and membership_status = 'accepted')
+    or (
+      membership_status = 'invited'
+      and exists (
+        select 1
+        from public.friendships f
+        where f.status = 'accepted'
+          and (
+            (f.requester_id = auth.uid() and f.addressee_id = profile_id)
+            or (f.addressee_id = auth.uid() and f.requester_id = profile_id)
+          )
+      )
     )
   )
 );
@@ -350,6 +371,14 @@ on public.group_members for update
 to authenticated
 using (auth.uid() = profile_id)
 with check (auth.uid() = profile_id);
+
+create policy "members can leave or creator can remove members"
+on public.group_members for delete
+to authenticated
+using (
+  auth.uid() = profile_id
+  or private.is_group_creator(group_id, auth.uid())
+);
 
 -- تفعيل Realtime على جداول الطلبات والتنبيهات.
 do $$
