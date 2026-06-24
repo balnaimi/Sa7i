@@ -36,6 +36,10 @@ VAPID_PRIVATE_KEY=
 VAPID_SUBJECT=mailto:admin@example.com
 ```
 
+## Versioning
+
+Sa7i uses semantic versioning: `MAJOR.MINOR.PATCH`. See `CHANGELOG.md` for release notes.
+
 ## Status
 
 Prototype.
