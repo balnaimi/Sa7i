@@ -4,6 +4,11 @@ All notable changes to Sa7i are documented here.
 
 Sa7i follows semantic versioning: `MAJOR.MINOR.PATCH`.
 
+## [0.3.2] - 2026-06-24
+
+### Fixed
+- Fixed group loading by explicitly embedding member profiles through `group_members.profile_id` when Supabase sees multiple relationships to `profiles`.
+
 ## [0.3.1] - 2026-06-24
 
 ### Security

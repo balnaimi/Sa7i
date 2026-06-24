@@ -577,7 +577,7 @@ export default function Home() {
   async function loadGroups(userId: string, friendRows = friends) {
     const { data, error } = await supabase
       .from("groups")
-      .select("*, members:group_members(*, profile:profiles(*))")
+      .select("*, members:group_members(*, profile:profiles!group_members_profile_id_fkey(*))")
       .order("updated_at", { ascending: false });
 
     if (error) {
