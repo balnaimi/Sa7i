@@ -4,6 +4,17 @@ All notable changes to Sa7i are documented here.
 
 Sa7i follows semantic versioning: `MAJOR.MINOR.PATCH`.
 
+## [0.5.0] - 2026-06-24
+
+### Changed
+- Redesigned the authenticated home screen into two primary cards: `الأصدقاء` and `القروبات`.
+- Moved friend adding/requests and group creation/invitations into grouped settings sections.
+- Simplified top navigation to `الرئيسية`, `التنبيهات`, and `الإعدادات` for a cleaner app-like flow.
+- Polished the groups view to focus only on active groups and their member states.
+
+### Added
+- Admin crown badges on groups and creator member cards so group owners are obvious.
+
 ## [0.4.0] - 2026-06-24
 
 ### Added

@@ -6,7 +6,7 @@ import type { Friendship, GroupMember, GroupResponse, Profile, Sa7iGroup, WakeSi
 
 const USERNAME_RE = /^[a-zA-Z0-9_]{3,24}$/;
 
-type View = "auth" | "home" | "groups" | "invites" | "settings" | "missed";
+type View = "auth" | "home" | "friends" | "groups" | "settings" | "missed";
 type ToastTone = "ok" | "warn" | "error";
 type Toast = { tone: ToastTone; message: string } | null;
 type WakeSoundId = "classic" | "soft" | "urgent" | "chime";
@@ -285,7 +285,6 @@ export default function Home() {
   const [outgoingRequests, setOutgoingRequests] = useState<Friendship[]>([]);
   const [groups, setGroups] = useState<GroupRow[]>([]);
   const [selectedGroup, setSelectedGroup] = useState<GroupRow | null>(null);
-  const [groupTab, setGroupTab] = useState<"my" | "new" | "invites">("my");
   const [newGroupName, setNewGroupName] = useState("");
   const [selectedGroupFriendIds, setSelectedGroupFriendIds] = useState<string[]>([]);
   const [expandedFriendId, setExpandedFriendId] = useState<string | null>(null);
@@ -995,7 +994,6 @@ export default function Home() {
     setOutgoingRequests([]);
     setGroups([]);
     setSelectedGroup(null);
-    setGroupTab("my");
     setExpandedFriendId(null);
     setSelectedFriend(null);
     setMissedSignals([]);
@@ -1124,7 +1122,6 @@ export default function Home() {
       setSelectedGroupFriendIds([]);
       const loadedGroups = await loadGroups(profile.id);
       setSelectedGroup(loadedGroups.find((group) => group.id === groupId) ?? null);
-      setGroupTab("my");
       notify("تم إنشاء القروب وإرسال الدعوات.");
     } catch (error) {
       notify(error instanceof Error ? error.message : "تعذر إنشاء القروب.", "error");
@@ -1200,7 +1197,7 @@ export default function Home() {
 
       const loadedGroups = await loadGroups(profile.id);
       setSelectedGroup(loadedGroups.find((row) => row.id === group.id) ?? null);
-      setGroupTab("my");
+      setView("groups");
       notify("قبلت دعوة القروب.");
     } catch (error) {
       notify(error instanceof Error ? error.message : "تعذر قبول الدعوة.", "error");
@@ -1559,19 +1556,13 @@ export default function Home() {
           {profile ? (
             <div className="flex flex-wrap gap-2">
               <button className={buttonClass(view === "home" ? "primary" : "ghost")} onClick={() => setView("home")}>
-                الأصدقاء
-              </button>
-              <button className={buttonClass(view === "groups" ? "primary" : "ghost")} onClick={() => setView("groups")}>
-                القروبات {acceptedGroups.length + groupInvitations.length > 0 ? `(${acceptedGroups.length + groupInvitations.length})` : ""}
+                الرئيسية
               </button>
               <button className={buttonClass(view === "missed" ? "primary" : "ghost")} onClick={() => setView("missed")}>
-                تنبيهات فائتة {pendingSignalCount > 0 ? `(${pendingSignalCount})` : ""}
-              </button>
-              <button className={buttonClass(view === "invites" ? "primary" : "ghost")} onClick={() => setView("invites")}>
-                الإضافة {incomingRequests.length > 0 ? `(${incomingRequests.length})` : ""}
+                التنبيهات {pendingSignalCount > 0 ? `(${pendingSignalCount})` : ""}
               </button>
               <button className={buttonClass(view === "settings" ? "primary" : "ghost")} onClick={() => setView("settings")}>
-                الإعدادات
+                الإعدادات {incomingRequests.length + groupInvitations.length > 0 ? `(${incomingRequests.length + groupInvitations.length})` : ""}
               </button>
               <button className={buttonClass("ghost")} onClick={signOut}>
                 خروج
@@ -1651,6 +1642,60 @@ export default function Home() {
         ) : null}
 
         {view === "home" ? (
+          <section className="flex flex-1 items-center py-8">
+            <div className="w-full">
+              <div className="mb-8 rounded-[2rem] border border-white/10 bg-white/10 p-6 text-center shadow-2xl backdrop-blur sm:p-8">
+                <p className="text-sm font-semibold text-emerald-300">لوحة سريعة</p>
+                <h2 className="mt-2 text-3xl font-black sm:text-5xl">وش تبي تفتح؟</h2>
+                <p className="mx-auto mt-3 max-w-2xl text-sm leading-7 text-white/60">
+                  خلّينا الرئيسية بسيطة: الأصدقاء في خانة، والقروبات في خانة. كل الإضافات والدعوات والإعدادات تلقاها في الإعدادات.
+                </p>
+              </div>
+
+              <div className="grid gap-5 md:grid-cols-2">
+                <button
+                  className="group overflow-hidden rounded-[2rem] border border-white/10 bg-slate-950/65 p-6 text-right shadow-2xl transition hover:-translate-y-1 hover:border-emerald-300/50 hover:bg-slate-900"
+                  onClick={() => setView("friends")}
+                  type="button"
+                >
+                  <div className="flex items-start justify-between gap-4">
+                    <span className="grid h-14 w-14 place-items-center rounded-2xl bg-emerald-300 text-3xl text-slate-950 shadow-lg shadow-emerald-300/25">👥</span>
+                    <span className="rounded-full bg-white/10 px-3 py-1 text-xs font-black text-white/70">{friends.length} أصدقاء</span>
+                  </div>
+                  <h3 className="mt-8 text-3xl font-black">الأصدقاء</h3>
+                  <p className="mt-3 text-sm leading-7 text-white/55">
+                    افتح قائمة أصدقائك، اختار شخص، أرسل صاحي، أو عدّل الاسم والكتم والحذف من نفس المكان.
+                  </p>
+                  <span className="mt-6 inline-flex rounded-2xl bg-white/10 px-4 py-2 text-sm font-black text-white transition group-hover:bg-emerald-300 group-hover:text-slate-950">
+                    دخول الأصدقاء
+                  </span>
+                </button>
+
+                <button
+                  className="group overflow-hidden rounded-[2rem] border border-white/10 bg-slate-950/65 p-6 text-right shadow-2xl transition hover:-translate-y-1 hover:border-sky-300/50 hover:bg-slate-900"
+                  onClick={() => setView("groups")}
+                  type="button"
+                >
+                  <div className="flex items-start justify-between gap-4">
+                    <span className="grid h-14 w-14 place-items-center rounded-2xl bg-sky-300 text-3xl text-slate-950 shadow-lg shadow-sky-300/25">▦</span>
+                    <span className="rounded-full bg-white/10 px-3 py-1 text-xs font-black text-white/70">
+                      {acceptedGroups.length} قروبات · {groupInvitations.length} دعوات
+                    </span>
+                  </div>
+                  <h3 className="mt-8 text-3xl font-black">القروبات</h3>
+                  <p className="mt-3 text-sm leading-7 text-white/55">
+                    شوف القروبات اللي أنت داخلها، اختر صح أو لا أو بدون قرار، وتعرف من الأدمن بعلامة التاج.
+                  </p>
+                  <span className="mt-6 inline-flex rounded-2xl bg-white/10 px-4 py-2 text-sm font-black text-white transition group-hover:bg-sky-300 group-hover:text-slate-950">
+                    دخول القروبات
+                  </span>
+                </button>
+              </div>
+            </div>
+          </section>
+        ) : null}
+
+        {view === "friends" ? (
           <section className="flex-1 py-8">
             <div className="rounded-[2rem] border border-white/10 bg-white/10 p-5 backdrop-blur sm:p-8">
               <div className="mb-6 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
@@ -1666,25 +1711,15 @@ export default function Home() {
               </div>
 
               {friends.length === 0 ? (
-                <div className="rounded-[2rem] border border-dashed border-white/15 bg-black/10 p-5 sm:p-8">
-                  <div className="mb-6 text-center">
-                    <h3 className="text-2xl font-black text-white">أول مرة؟ أضف صديقك</h3>
-                    <p className="mt-2 text-sm leading-6 text-white/55">
-                      انسخ كودك وأرسله له، أو اكتب كوده هنا وأرسل طلب الإضافة.
+                <div className="grid min-h-[320px] place-items-center rounded-[2rem] border border-dashed border-white/15 bg-black/10 p-8 text-center">
+                  <div>
+                    <h3 className="text-2xl font-black text-white">ما عندك أصدقاء حالياً</h3>
+                    <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-white/55">
+                      إضافة الأصدقاء وقبول الدعوات صارت داخل الإعدادات عشان تبقى صفحة الأصدقاء للناس المضافين فقط.
                     </p>
-                  </div>
-
-                  <div className="grid gap-4 lg:grid-cols-2">
-                    <InviteCodeCard inviteCode={profile?.invite_code} onCopy={() => void copyInviteCode()} />
-
-                    <AddFriendForm
-                      friendCode={friendCode}
-                      friendLabel={friendLabel}
-                      busy={busy}
-                      onSubmit={addFriend}
-                      onFriendCodeChange={setFriendCode}
-                      onFriendLabelChange={setFriendLabel}
-                    />
+                    <button className={`${buttonClass("primary")} mt-5`} onClick={() => setView("settings")} type="button">
+                      افتح إعدادات الأصدقاء
+                    </button>
                   </div>
                 </div>
               ) : (
@@ -1776,263 +1811,171 @@ export default function Home() {
 
         {view === "groups" ? (
           <section className="flex-1 py-8">
-            <div className="mb-5 rounded-[2rem] border border-white/10 bg-white/10 p-3 backdrop-blur">
-              <div className="grid gap-2 sm:grid-cols-3">
-                <button className={buttonClass(groupTab === "my" ? "primary" : "ghost")} onClick={() => setGroupTab("my")} type="button">
-                  قروباتي {acceptedGroups.length > 0 ? `(${acceptedGroups.length})` : ""}
-                </button>
-                <button className={buttonClass(groupTab === "new" ? "primary" : "ghost")} onClick={() => setGroupTab("new")} type="button">
-                  إنشاء قروب
-                </button>
-                <button className={buttonClass(groupTab === "invites" ? "primary" : "ghost")} onClick={() => setGroupTab("invites")} type="button">
-                  دعوات القروبات {groupInvitations.length > 0 ? `(${groupInvitations.length})` : ""}
-                </button>
+            <div className="mb-5 flex flex-col gap-3 rounded-[2rem] border border-white/10 bg-white/10 p-5 backdrop-blur sm:flex-row sm:items-end sm:justify-between">
+              <div>
+                <p className="text-sm font-semibold text-sky-300">القروبات</p>
+                <h2 className="text-3xl font-black">قروباتك النشطة</h2>
+                <p className="mt-2 text-sm leading-6 text-white/55">
+                  هنا فقط القروبات اللي أنت داخلها. إنشاء القروبات وقبول الدعوات نقلناها للإعدادات عشان الصفحة تبقى نظيفة.
+                </p>
               </div>
+              <button className={buttonClass("ghost")} onClick={() => setView("settings")} type="button">
+                إنشاء/دعوات القروبات
+              </button>
             </div>
 
-            {groupTab === "new" ? (
-              <form className="mx-auto max-w-2xl rounded-[2rem] border border-white/10 bg-white/10 p-5 backdrop-blur sm:p-6" onSubmit={createGroup}>
-                <h2 className="mb-2 text-2xl font-black">إنشاء قروب</h2>
-                <p className="mb-5 text-sm leading-6 text-white/55">
-                  القروب ممكن يكون لأي موضوع: طلعة، تصويت سريع، مهمة، أو أي عنوان تختاره. الأعضاء يستلمون دعوة قبل الدخول.
-                </p>
-                <label className="block">
-                  <span className="mb-2 block text-sm text-white/70">عنوان القروب</span>
-                  <input
-                    className="w-full rounded-2xl border border-white/10 bg-slate-950/70 px-4 py-3 text-white outline-none ring-emerald-300/50 focus:ring-4"
-                    value={newGroupName}
-                    onChange={(event) => setNewGroupName(event.target.value)}
-                    placeholder="مثال: سينما الخميس، تصويت العشاء، مهمة المكتب"
-                    maxLength={80}
-                  />
-                </label>
-
-                <div className="mt-5">
-                  <p className="mb-3 text-sm font-black text-white">اختر المدعوين</p>
-                  {friends.length === 0 ? (
-                    <p className="rounded-2xl bg-black/20 p-4 text-sm text-white/55">
-                      أضف أصدقاء أولاً، وبعدها تقدر تسوي قروب.
-                    </p>
-                  ) : (
-                    <div className="max-h-80 space-y-2 overflow-auto pr-1">
-                      {friends.map((friend) => (
-                        <label
-                          key={friend.friendshipId}
-                          className={`flex cursor-pointer items-center justify-between gap-3 rounded-2xl border p-3 transition ${
-                            selectedGroupFriendIds.includes(friend.user.id)
-                              ? "border-emerald-300/60 bg-emerald-300/15"
-                              : "border-white/10 bg-black/20 hover:bg-black/30"
-                          }`}
-                        >
-                          <span>
-                            <span className="block font-black">{friend.label}</span>
-                            <span className="block text-xs text-emerald-300">@{friend.user.username}</span>
-                          </span>
-                          <input
-                            className="h-5 w-5 accent-emerald-300"
-                            type="checkbox"
-                            checked={selectedGroupFriendIds.includes(friend.user.id)}
-                            onChange={() => toggleGroupFriend(friend.user.id)}
-                          />
-                        </label>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                <button className={`${buttonClass()} mt-5 w-full`} disabled={busy || friends.length === 0}>
-                  إنشاء وإرسال الدعوات
-                </button>
-              </form>
-            ) : null}
-
-            {groupTab === "invites" ? (
-              <div className="mx-auto max-w-3xl rounded-[2rem] border border-white/10 bg-white/10 p-5 backdrop-blur sm:p-6">
-                <h2 className="mb-4 text-2xl font-black">دعوات القروبات</h2>
-                {groupInvitations.length === 0 ? (
+            <section className="grid gap-5 lg:grid-cols-[0.9fr_1.1fr]">
+              <div className="rounded-[2rem] border border-white/10 bg-white/10 p-5 backdrop-blur sm:p-6">
+                <h3 className="mb-4 text-xl font-black">القائمة</h3>
+                {acceptedGroups.length === 0 ? (
                   <p className="rounded-2xl border border-dashed border-white/15 bg-black/10 p-6 text-center text-sm text-white/55">
-                    ما عندك دعوات قروبات حالياً.
+                    ما عندك قروبات نشطة. روح للإعدادات عشان تنشئ قروب أو تقبل دعوة.
                   </p>
                 ) : (
-                  <div className="space-y-3">
-                    {groupInvitations.map((group) => (
-                      <div key={group.id} className="rounded-2xl border border-white/10 bg-slate-950/60 p-4">
-                        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                          <div>
-                            <p className="text-lg font-black">{group.name}</p>
-                            <p className="text-xs text-white/50">دعوة من عضو في القروب · {group.members.length} أعضاء/مدعوين</p>
+                  <div className="max-h-[70vh] space-y-3 overflow-auto pr-1">
+                    {acceptedGroups.map((group) => {
+                      const counts = groupCounts(group);
+                      const isAdmin = group.created_by === profile?.id;
+                      return (
+                        <button
+                          key={group.id}
+                          className={`w-full rounded-2xl border p-4 text-right transition ${
+                            selectedGroup?.id === group.id
+                              ? "border-sky-300/60 bg-sky-300/15"
+                              : "border-white/10 bg-slate-950/60 hover:border-sky-300/40 hover:bg-slate-900"
+                          }`}
+                          onClick={() => setSelectedGroup(group)}
+                          type="button"
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <div className="flex flex-wrap items-center gap-2">
+                                <p className="text-lg font-black">{group.name}</p>
+                                {isAdmin ? (
+                                  <span className="rounded-full bg-amber-300 px-2 py-1 text-[11px] font-black text-slate-950">👑 أدمن</span>
+                                ) : null}
+                              </div>
+                              <p className="mt-1 text-xs text-white/50">{acceptedGroupMembers(group).length} داخل · {counts.invited} دعوة معلقة</p>
+                            </div>
+                            <div className="flex flex-wrap justify-end gap-1 text-xs font-black">
+                              <span className="rounded-full bg-emerald-400 px-2 py-1 text-slate-950">صح {counts.yes}</span>
+                              <span className="rounded-full bg-rose-500 px-2 py-1 text-white">لا {counts.no}</span>
+                              <span className="rounded-full bg-white/15 px-2 py-1 text-white">بدون {counts.pending}</span>
+                            </div>
                           </div>
-                          <div className="grid grid-cols-2 gap-2 sm:min-w-64">
-                            <button className={`${buttonClass("primary")} py-2`} onClick={() => acceptGroupInvite(group)} disabled={busy} type="button">
-                              قبول
-                            </button>
-                            <button className={`${buttonClass("danger")} py-2`} onClick={() => rejectGroupInvite(group)} disabled={busy} type="button">
-                              رفض
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
+                        </button>
+                      );
+                    })}
                   </div>
                 )}
               </div>
-            ) : null}
 
-            {groupTab === "my" ? (
-              <section className="grid gap-5 lg:grid-cols-[0.9fr_1.1fr]">
-                <div className="rounded-[2rem] border border-white/10 bg-white/10 p-5 backdrop-blur sm:p-6">
-                  <h2 className="mb-4 text-2xl font-black">قروباتي</h2>
-                  {acceptedGroups.length === 0 ? (
-                    <p className="rounded-2xl border border-dashed border-white/15 bg-black/10 p-6 text-center text-sm text-white/55">
-                      ما عندك قروبات نشطة. أنشئ قروب أو اقبل دعوة.
-                    </p>
-                  ) : (
-                    <div className="max-h-[70vh] space-y-3 overflow-auto pr-1">
-                      {acceptedGroups.map((group) => {
-                        const counts = groupCounts(group);
+              <div className="rounded-[2rem] border border-white/10 bg-white/10 p-5 backdrop-blur sm:p-8">
+                {selectedGroup ? (
+                  <div>
+                    <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                      <div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p className="text-sm font-semibold text-sky-300">قروب</p>
+                          {selectedGroup.created_by === profile?.id ? (
+                            <span className="rounded-full bg-amber-300 px-2 py-1 text-[11px] font-black text-slate-950">👑 أنت الأدمن</span>
+                          ) : null}
+                        </div>
+                        <h2 className="mt-1 text-3xl font-black">{selectedGroup.name}</h2>
+                        <p className="mt-2 text-sm text-white/55">اختر صح أو لا، أو رجّع نفسك بدون قرار.</p>
+                      </div>
+                      <div className="grid grid-cols-3 gap-2 sm:min-w-72">
+                        <button className={`${buttonClass("primary")} py-2`} onClick={() => updateGroupResponse(selectedGroup, "yes")} disabled={busy} type="button">صح</button>
+                        <button className={`${buttonClass("danger")} py-2`} onClick={() => updateGroupResponse(selectedGroup, "no")} disabled={busy} type="button">لا</button>
+                        <button className={`${buttonClass("ghost")} py-2`} onClick={() => updateGroupResponse(selectedGroup, null)} disabled={busy} type="button">بدون قرار</button>
+                      </div>
+                    </div>
+
+                    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                      {acceptedGroupMembers(selectedGroup).map((member) => {
+                        const tone = member.response === "yes"
+                          ? "border-emerald-300/50 bg-emerald-400 text-slate-950 shadow-emerald-400/20"
+                          : member.response === "no"
+                            ? "border-rose-300/50 bg-rose-500 text-white shadow-rose-500/20"
+                            : "border-white/10 bg-slate-950/60 text-white";
+                        const responseText = member.response === "yes" ? "صح" : member.response === "no" ? "لا" : "بدون قرار";
+                        const isCreator = member.profile_id === selectedGroup.created_by;
+                        const canRemove = member.profile_id === profile?.id || selectedGroup.created_by === profile?.id;
                         return (
-                          <button
-                            key={group.id}
-                            className={`w-full rounded-2xl border p-4 text-right transition ${
-                              selectedGroup?.id === group.id
-                                ? "border-emerald-300/60 bg-emerald-300/15"
-                                : "border-white/10 bg-slate-950/60 hover:border-emerald-300/40 hover:bg-slate-900"
-                            }`}
-                            onClick={() => setSelectedGroup(group)}
-                            type="button"
-                          >
-                            <div className="flex items-start justify-between gap-3">
+                          <div key={member.id} className={`min-h-36 rounded-3xl border p-4 shadow-lg ${tone}`}>
+                            <div className="flex h-full flex-col justify-between gap-4">
                               <div>
-                                <p className="text-lg font-black">{group.name}</p>
-                                <p className="text-xs text-white/50">{acceptedGroupMembers(group).length} داخل · {counts.invited} دعوة معلقة</p>
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <p className="text-lg font-black">{memberDisplayName(member)}</p>
+                                  {isCreator ? (
+                                    <span className="rounded-full bg-amber-300 px-2 py-0.5 text-[10px] font-black text-slate-950">👑 أدمن</span>
+                                  ) : null}
+                                </div>
+                                <p className={`text-xs ${member.response === "yes" ? "text-slate-800" : "text-white/60"}`}>@{member.profile?.username || "member"}</p>
                               </div>
-                              <div className="flex gap-1 text-xs font-black">
-                                <span className="rounded-full bg-emerald-400 px-2 py-1 text-slate-950">صح {counts.yes}</span>
-                                <span className="rounded-full bg-rose-500 px-2 py-1 text-white">لا {counts.no}</span>
-                                <span className="rounded-full bg-white/15 px-2 py-1 text-white">بدون {counts.pending}</span>
+                              <div className="flex items-center justify-between gap-3">
+                                <span className="text-sm font-black">{responseText}</span>
+                                {member.response === "yes" ? (
+                                  <ReplyStatusIcon text="✅" className="h-10 w-10" />
+                                ) : member.response === "no" ? (
+                                  <ReplyStatusIcon text="❌" className="h-10 w-10" />
+                                ) : (
+                                  <span className="grid h-10 w-10 place-items-center rounded-2xl border border-white/15 text-xl text-white/40">؟</span>
+                                )}
                               </div>
+                              {canRemove ? (
+                                <button
+                                  className={`${buttonClass(member.profile_id === profile?.id ? "ghost" : "danger")} py-2`}
+                                  onClick={() => removeGroupMember(selectedGroup, member)}
+                                  disabled={busy}
+                                  type="button"
+                                >
+                                  {member.profile_id === profile?.id ? "الخروج من القروب" : "إزالة العضو"}
+                                </button>
+                              ) : null}
                             </div>
-                          </button>
+                          </div>
                         );
                       })}
                     </div>
-                  )}
-                </div>
 
-                <div className="rounded-[2rem] border border-white/10 bg-white/10 p-5 backdrop-blur sm:p-8">
-                  {selectedGroup ? (
-                    <div>
-                      <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                        <div>
-                          <p className="text-sm font-semibold text-emerald-300">قروب</p>
-                          <h2 className="text-3xl font-black">{selectedGroup.name}</h2>
-                          <p className="mt-2 text-sm text-white/55">
-                            اختر صح أو لا، أو رجّع نفسك بدون قرار إذا تغيرت ظروفك.
-                          </p>
-                        </div>
-                        <div className="grid grid-cols-3 gap-2 sm:min-w-72">
-                          <button className={`${buttonClass("primary")} py-2`} onClick={() => updateGroupResponse(selectedGroup, "yes")} disabled={busy} type="button">
-                            صح
-                          </button>
-                          <button className={`${buttonClass("danger")} py-2`} onClick={() => updateGroupResponse(selectedGroup, "no")} disabled={busy} type="button">
-                            لا
-                          </button>
-                          <button className={`${buttonClass("ghost")} py-2`} onClick={() => updateGroupResponse(selectedGroup, null)} disabled={busy} type="button">
-                            بدون قرار
-                          </button>
-                        </div>
-                      </div>
-
-                      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                        {acceptedGroupMembers(selectedGroup).map((member) => {
-                          const tone = member.response === "yes"
-                            ? "border-emerald-300/50 bg-emerald-400 text-slate-950 shadow-emerald-400/20"
-                            : member.response === "no"
-                              ? "border-rose-300/50 bg-rose-500 text-white shadow-rose-500/20"
-                              : "border-white/10 bg-slate-950/60 text-white";
-                          const responseText = member.response === "yes" ? "صح" : member.response === "no" ? "لا" : "بدون قرار";
-                          const canRemove = member.profile_id === profile?.id || selectedGroup.created_by === profile?.id;
-                          return (
-                            <div key={member.id} className={`min-h-36 rounded-3xl border p-4 shadow-lg ${tone}`}>
-                              <div className="flex h-full flex-col justify-between gap-4">
-                                <div>
-                                  <p className="text-lg font-black">{memberDisplayName(member)}</p>
-                                  <p className={`text-xs ${member.response === "yes" ? "text-slate-800" : "text-white/60"}`}>
-                                    @{member.profile?.username || "member"}
-                                  </p>
-                                </div>
-                                <div className="flex items-center justify-between gap-3">
-                                  <span className="text-sm font-black">{responseText}</span>
-                                  {member.response === "yes" ? (
-                                    <ReplyStatusIcon text="✅" className="h-10 w-10" />
-                                  ) : member.response === "no" ? (
-                                    <ReplyStatusIcon text="❌" className="h-10 w-10" />
-                                  ) : (
-                                    <span className="grid h-10 w-10 place-items-center rounded-2xl border border-white/15 text-xl text-white/40">؟</span>
-                                  )}
-                                </div>
-                                {canRemove ? (
-                                  <button
-                                    className={`${buttonClass(member.profile_id === profile?.id ? "ghost" : "danger")} py-2`}
-                                    onClick={() => removeGroupMember(selectedGroup, member)}
-                                    disabled={busy}
-                                    type="button"
-                                  >
-                                    {member.profile_id === profile?.id ? "الخروج من القروب" : "إزالة العضو"}
-                                  </button>
-                                ) : null}
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-
-                      {selectedGroup.created_by === profile?.id ? (
-                        <div className="mt-5 rounded-2xl border border-white/10 bg-black/15 p-4">
-                          <p className="mb-3 text-sm font-black text-white">دعوة أصدقاء إضافيين</p>
-                          {friends.filter((friend) => !selectedGroup.members.some((member) => member.profile_id === friend.user.id)).length === 0 ? (
-                            <p className="text-sm text-white/50">كل أصدقائك موجودين أو مدعوين في هذا القروب.</p>
-                          ) : (
-                            <div className="flex flex-wrap gap-2">
-                              {friends
-                                .filter((friend) => !selectedGroup.members.some((member) => member.profile_id === friend.user.id))
-                                .map((friend) => (
-                                  <button
-                                    key={friend.friendshipId}
-                                    className={`${buttonClass("ghost")} py-2`}
-                                    onClick={() => inviteFriendToGroup(selectedGroup, friend)}
-                                    disabled={busy}
-                                    type="button"
-                                  >
-                                    دعوة {friend.label}
-                                  </button>
-                                ))}
-                            </div>
-                          )}
-                        </div>
-                      ) : null}
-
-                      {selectedGroup.members.some((member) => member.membership_status === "invited") ? (
-                        <div className="mt-5 rounded-2xl border border-amber-300/20 bg-amber-300/10 p-4">
-                          <p className="mb-3 text-sm font-black text-amber-100">دعوات معلقة</p>
-                          <div className="flex flex-wrap gap-2 text-xs">
-                            {selectedGroup.members.filter((member) => member.membership_status === "invited").map((member) => (
-                              <span key={member.id} className="rounded-full bg-black/25 px-3 py-1 text-amber-50">
-                                {memberDisplayName(member)}
-                              </span>
-                            ))}
+                    {selectedGroup.created_by === profile?.id ? (
+                      <div className="mt-5 rounded-2xl border border-white/10 bg-black/15 p-4">
+                        <p className="mb-3 text-sm font-black text-white">دعوة أصدقاء إضافيين</p>
+                        {friends.filter((friend) => !selectedGroup.members.some((member) => member.profile_id === friend.user.id)).length === 0 ? (
+                          <p className="text-sm text-white/50">كل أصدقائك موجودين أو مدعوين في هذا القروب.</p>
+                        ) : (
+                          <div className="flex flex-wrap gap-2">
+                            {friends
+                              .filter((friend) => !selectedGroup.members.some((member) => member.profile_id === friend.user.id))
+                              .map((friend) => (
+                                <button key={friend.friendshipId} className={`${buttonClass("ghost")} py-2`} onClick={() => inviteFriendToGroup(selectedGroup, friend)} disabled={busy} type="button">
+                                  دعوة {friend.label}
+                                </button>
+                              ))}
                           </div>
+                        )}
+                      </div>
+                    ) : null}
+
+                    {selectedGroup.members.some((member) => member.membership_status === "invited") ? (
+                      <div className="mt-5 rounded-2xl border border-amber-300/20 bg-amber-300/10 p-4">
+                        <p className="mb-3 text-sm font-black text-amber-100">دعوات معلقة</p>
+                        <div className="flex flex-wrap gap-2 text-xs">
+                          {selectedGroup.members.filter((member) => member.membership_status === "invited").map((member) => (
+                            <span key={member.id} className="rounded-full bg-black/25 px-3 py-1 text-amber-50">{memberDisplayName(member)}</span>
+                          ))}
                         </div>
-                      ) : null}
-                    </div>
-                  ) : (
-                    <div className="grid min-h-[520px] place-items-center rounded-[2rem] border border-dashed border-white/15 bg-black/10 p-8 text-center text-white/55">
-                      اختر قروب من القائمة أو أنشئ قروب جديد.
-                    </div>
-                  )}
-                </div>
-              </section>
-            ) : null}
+                      </div>
+                    ) : null}
+                  </div>
+                ) : (
+                  <div className="grid min-h-[520px] place-items-center rounded-[2rem] border border-dashed border-white/15 bg-black/10 p-8 text-center text-white/55">
+                    اختر قروب من القائمة.
+                  </div>
+                )}
+              </div>
+            </section>
           </section>
         ) : null}
 
@@ -2086,229 +2029,178 @@ export default function Home() {
         ) : null}
 
         {view === "settings" ? (
-          <section className="grid flex-1 gap-5 py-8 lg:grid-cols-2">
-            <div className="space-y-5">
-              <div className="rounded-[2rem] border border-white/10 bg-white/10 p-5 backdrop-blur">
-                <p className="text-sm text-white/60">داخل باسم</p>
-                <h2 className="text-2xl font-black">{profile?.display_name || profile?.username}</h2>
-                <p className="text-sm text-emerald-300">@{profile?.username}</p>
-                <p className="mt-4 text-sm leading-6 text-white/55">
-                  معلومات الحساب والتنبيهات الخاصة بهذا الجهاز. الإضافة وطلبات الصداقة نقلناها لتاب مستقل عشان الصفحة تبقى خفيفة.
-                </p>
-              </div>
-
-              <div className="rounded-[2rem] border border-white/10 bg-white/10 p-5 backdrop-blur">
-                <h3 className="mb-2 text-lg font-black">تنبيهات النظام</h3>
-                <p className="mb-4 text-sm leading-6 text-white/55">
-                  فعلها عشان توصلك تنبيهات PWA من النظام حتى لو صفحة التطبيق مو مفتوحة.
-                </p>
-                <button className={`${buttonClass(pushEnabled ? "ghost" : "primary")} w-full`} onClick={enableSystemNotifications} disabled={busy}>
-                  {pushEnabled ? "تنبيهات النظام مفعلة على هذا الجهاز" : "تفعيل تنبيهات النظام"}
-                </button>
-                <button
-                  className={`${buttonClass("ghost")} mt-3 w-full`}
-                  onClick={testSystemNotifications}
-                  disabled={busy || !pushEnabled}
-                  type="button"
-                >
-                  اختبار تنبيه النظام
-                </button>
-                {!PUBLIC_VAPID_KEY ? (
-                  <p className="mt-3 text-xs leading-5 text-amber-200">
-                    يحتاج إعداد VAPID في Vercel/Supabase قبل ما يشتغل على النسخة المنشورة.
-                  </p>
-                ) : null}
-              </div>
+          <section className="flex-1 py-8">
+            <div className="mb-5 rounded-[2rem] border border-white/10 bg-white/10 p-5 backdrop-blur sm:p-6">
+              <p className="text-sm font-semibold text-emerald-300">الإعدادات</p>
+              <h2 className="mt-1 text-3xl font-black">مركز التحكم</h2>
+              <p className="mt-2 text-sm leading-6 text-white/55">
+                قسمنا الإعدادات حسب الموضوع: الأصدقاء، القروبات، التنبيهات، والشكل.
+              </p>
             </div>
 
-            <div className="space-y-5">
-              <div className="rounded-[2rem] border border-white/10 bg-white/10 p-5 backdrop-blur">
-                <h3 className="mb-2 text-lg font-black">صوت التنبيه</h3>
-                <p className="mb-4 text-sm leading-6 text-white/55">
-                  اختر الصوت اللي تسمعه إذا وصلك تنبيه. الاختيار ينحفظ على هذا الجهاز.
-                </p>
-                <div className="space-y-2">
-                  {WAKE_SOUND_OPTIONS.map((option) => (
-                    <label
-                      key={option.id}
-                      className={`flex cursor-pointer items-start gap-3 rounded-2xl border p-3 transition ${
-                        wakeSound === option.id
-                          ? "border-emerald-300/60 bg-emerald-300/15"
-                          : "border-white/10 bg-black/20 hover:bg-black/30"
-                      }`}
-                    >
-                      <input
-                        className="mt-1 accent-emerald-300"
-                        type="radio"
-                        name="wake-sound"
-                        checked={wakeSound === option.id}
-                        onChange={() => changeWakeSound(option.id)}
-                      />
-                      <span>
-                        <span className="block font-black">{option.label}</span>
-                        <span className="block text-xs leading-5 text-white/55">{option.description}</span>
-                      </span>
-                    </label>
-                  ))}
+            <div className="grid gap-5 lg:grid-cols-2">
+              <div className="space-y-5">
+                <div className="rounded-[2rem] border border-white/10 bg-white/10 p-5 backdrop-blur">
+                  <h3 className="mb-2 text-xl font-black">الحساب</h3>
+                  <p className="text-sm text-white/60">داخل باسم</p>
+                  <h4 className="text-2xl font-black">{profile?.display_name || profile?.username}</h4>
+                  <p className="text-sm text-emerald-300">@{profile?.username}</p>
                 </div>
-                <button
-                  className={`${buttonClass("ghost")} mt-4 w-full`}
-                  type="button"
-                  onClick={() => playWakeSound()}
-                >
-                  تجربة الصوت
-                </button>
-              </div>
 
-              <div className="rounded-[2rem] border border-white/10 bg-white/10 p-5 backdrop-blur">
-                <h3 className="mb-2 text-lg font-black">لون الواجهة</h3>
-                <p className="mb-4 text-sm leading-6 text-white/55">
-                  اختر لون الخلفية المناسب لك. الاختيار محفوظ على هذا الجهاز.
-                </p>
-                <div className="grid grid-cols-2 gap-2">
-                  {THEME_OPTIONS.map((option) => (
-                    <button
-                      key={option.id}
-                      className={`rounded-2xl border px-4 py-3 text-sm font-black transition ${
-                        theme === option.id
-                          ? "border-emerald-300 bg-emerald-300 text-slate-950"
-                          : "border-white/10 bg-black/20 text-white hover:bg-black/30"
-                      }`}
-                      type="button"
-                      onClick={() => changeTheme(option.id)}
-                    >
-                      {option.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="rounded-[2rem] border border-white/10 bg-white/10 p-5 backdrop-blur">
-                <h3 className="mb-2 text-lg font-black">وضع الهدوء</h3>
-                <p className="mb-4 text-sm leading-6 text-white/55">
-                  إذا فعلته، تنبيهات النظام والصوت توقف في الوقت المحدد، لكن التنبيه يبقى محفوظ في التنبيهات الفائتة.
-                </p>
-                <label className="mb-4 flex cursor-pointer items-center justify-between gap-3 rounded-2xl bg-black/20 p-4">
-                  <span>
-                    <span className="block font-black">تفعيل الهدوء</span>
-                    <span className="block text-xs text-white/50">{quietActive ? "مفعل الآن" : "غير نشط الآن"}</span>
-                  </span>
-                  <input
-                    className="h-5 w-5 accent-emerald-300"
-                    type="checkbox"
-                    checked={quietEnabled}
-                    onChange={(event) => updateQuietHours({ enabled: event.target.checked })}
-                  />
-                </label>
-                <div className="grid grid-cols-2 gap-3">
-                  <label className="block">
-                    <span className="mb-2 block text-xs text-white/60">من</span>
-                    <input
-                      className="w-full rounded-2xl border border-white/10 bg-slate-950/70 px-3 py-3 text-white outline-none ring-emerald-300/50 focus:ring-4"
-                      type="time"
-                      value={quietStart}
-                      onChange={(event) => updateQuietHours({ start: event.target.value })}
+                <div className="rounded-[2rem] border border-white/10 bg-white/10 p-5 backdrop-blur">
+                  <h3 className="mb-2 text-xl font-black">الأصدقاء والإضافة</h3>
+                  <p className="mb-4 text-sm leading-6 text-white/55">كودك، إضافة صديق، وطلبات الصداقة كلها هنا.</p>
+                  <InviteCodeCard inviteCode={profile?.invite_code} onCopy={() => void copyInviteCode()} />
+                  <div className="mt-4 rounded-2xl border border-white/10 bg-black/15 p-4">
+                    <h4 className="mb-3 font-black">إضافة شخص بالكود</h4>
+                    <AddFriendForm
+                      friendCode={friendCode}
+                      friendLabel={friendLabel}
+                      busy={busy}
+                      onSubmit={addFriend}
+                      onFriendCodeChange={setFriendCode}
+                      onFriendLabelChange={setFriendLabel}
                     />
-                  </label>
-                  <label className="block">
-                    <span className="mb-2 block text-xs text-white/60">إلى</span>
-                    <input
-                      className="w-full rounded-2xl border border-white/10 bg-slate-950/70 px-3 py-3 text-white outline-none ring-emerald-300/50 focus:ring-4"
-                      type="time"
-                      value={quietEnd}
-                      onChange={(event) => updateQuietHours({ end: event.target.value })}
-                    />
-                  </label>
-                </div>
-              </div>
-            </div>
-          </section>
-        ) : null}
-
-        {view === "invites" ? (
-          <section className="grid flex-1 gap-5 py-8 lg:grid-cols-2">
-            <div className="space-y-5">
-              <div className="rounded-[2rem] border border-white/10 bg-white/10 p-5 backdrop-blur">
-                <h2 className="mb-2 text-2xl font-black">الإضافة والدعوات</h2>
-                <p className="text-sm leading-6 text-white/55">
-                  هنا كل شيء يخص إضافة الأصدقاء: كودك، إرسال طلب، قبول أو رفض الدعوات.
-                </p>
-                <div className="mt-4"><InviteCodeCard inviteCode={profile?.invite_code} onCopy={() => void copyInviteCode()} /></div>
-              </div>
-
-              <div className="rounded-[2rem] border border-white/10 bg-white/10 p-5 backdrop-blur">
-                <h3 className="mb-4 text-lg font-black">إضافة شخص بالكود</h3>
-                <AddFriendForm
-                  friendCode={friendCode}
-                  friendLabel={friendLabel}
-                  busy={busy}
-                  onSubmit={addFriend}
-                  onFriendCodeChange={setFriendCode}
-                  onFriendLabelChange={setFriendLabel}
-                />
-              </div>
-            </div>
-
-            <div className="space-y-5">
-              <div className="rounded-[2rem] border border-white/10 bg-white/10 p-5 backdrop-blur">
-                <h3 className="mb-4 text-lg font-black">طلبات واردة {incomingRequests.length > 0 ? `(${incomingRequests.length})` : ""}</h3>
-                {incomingRequests.length === 0 ? (
-                  <p className="text-sm text-white/50">ما فيه طلبات حالياً.</p>
-                ) : (
-                  <div className="space-y-3">
-                    {incomingRequests.map((request) => (
-                      <div key={request.id} className="rounded-2xl bg-black/20 p-3">
-                        <p className="text-xs text-white/50">طلب من</p>
-                        <p className="font-bold">
-                          {request.requester?.display_name || request.requester?.username || "مستخدم"}
-                        </p>
-                        <p className="text-sm text-emerald-300">@{request.requester?.username}</p>
-                        <input
-                          className="mt-3 w-full rounded-xl border border-white/10 bg-slate-950/70 px-3 py-2 text-sm text-white outline-none ring-emerald-300/50 focus:ring-4"
-                          value={acceptLabels[request.id] ?? ""}
-                          onChange={(event) =>
-                            setAcceptLabels((labels) => ({ ...labels, [request.id]: event.target.value }))
-                          }
-                          placeholder={`سمّه عندك: ${request.requester?.display_name || request.requester?.username || "صديقي"}`}
-                          maxLength={40}
-                        />
-                        <div className="mt-3 grid grid-cols-2 gap-2">
-                          <button
-                            className={`${buttonClass()} py-2`}
-                            onClick={() => acceptFriendship(request)}
-                            disabled={busy}
-                          >
-                            قبول
-                          </button>
-                          <button
-                            className={`${buttonClass("danger")} py-2`}
-                            onClick={() => rejectFriendship(request)}
-                            disabled={busy}
-                          >
-                            رفض
-                          </button>
+                  </div>
+                  <div className="mt-4 grid gap-3">
+                    <div className="rounded-2xl border border-white/10 bg-black/15 p-4">
+                      <h4 className="mb-3 font-black">طلبات واردة {incomingRequests.length > 0 ? `(${incomingRequests.length})` : ""}</h4>
+                      {incomingRequests.length === 0 ? (
+                        <p className="text-sm text-white/50">ما فيه طلبات حالياً.</p>
+                      ) : (
+                        <div className="space-y-3">
+                          {incomingRequests.map((request) => (
+                            <div key={request.id} className="rounded-2xl bg-black/20 p-3">
+                              <p className="text-xs text-white/50">طلب من</p>
+                              <p className="font-bold">{request.requester?.display_name || request.requester?.username || "مستخدم"}</p>
+                              <p className="text-sm text-emerald-300">@{request.requester?.username}</p>
+                              <input
+                                className="mt-3 w-full rounded-xl border border-white/10 bg-slate-950/70 px-3 py-2 text-sm text-white outline-none ring-emerald-300/50 focus:ring-4"
+                                value={acceptLabels[request.id] ?? ""}
+                                onChange={(event) => setAcceptLabels((labels) => ({ ...labels, [request.id]: event.target.value }))}
+                                placeholder={`سمّه عندك: ${request.requester?.display_name || request.requester?.username || "صديقي"}`}
+                                maxLength={40}
+                              />
+                              <div className="mt-3 grid grid-cols-2 gap-2">
+                                <button className={`${buttonClass()} py-2`} onClick={() => acceptFriendship(request)} disabled={busy}>قبول</button>
+                                <button className={`${buttonClass("danger")} py-2`} onClick={() => rejectFriendship(request)} disabled={busy}>رفض</button>
+                              </div>
+                            </div>
+                          ))}
                         </div>
-                      </div>
-                    ))}
+                      )}
+                    </div>
+                    <div className="rounded-2xl border border-white/10 bg-black/15 p-4">
+                      <h4 className="mb-3 font-black">طلبات مرسلة</h4>
+                      {outgoingRequests.length === 0 ? (
+                        <p className="text-sm text-white/50">ما فيه طلبات معلقة.</p>
+                      ) : (
+                        <div className="space-y-2 text-sm text-white/70">
+                          {outgoingRequests.map((request) => <p key={request.id}>بانتظار @{request.addressee?.username}</p>)}
+                        </div>
+                      )}
+                    </div>
                   </div>
-                )}
+                </div>
+
+                <div className="rounded-[2rem] border border-white/10 bg-white/10 p-5 backdrop-blur">
+                  <h3 className="mb-2 text-xl font-black">القروبات</h3>
+                  <p className="mb-4 text-sm leading-6 text-white/55">إنشاء قروب جديد وقبول/رفض دعوات القروبات.</p>
+                  <form className="rounded-2xl border border-white/10 bg-black/15 p-4" onSubmit={createGroup}>
+                    <h4 className="mb-3 font-black">إنشاء قروب</h4>
+                    <label className="block">
+                      <span className="mb-2 block text-sm text-white/70">عنوان القروب</span>
+                      <input className="w-full rounded-2xl border border-white/10 bg-slate-950/70 px-4 py-3 text-white outline-none ring-emerald-300/50 focus:ring-4" value={newGroupName} onChange={(event) => setNewGroupName(event.target.value)} placeholder="مثال: تصويت العشاء" maxLength={80} />
+                    </label>
+                    <div className="mt-4 max-h-60 space-y-2 overflow-auto pr-1">
+                      {friends.length === 0 ? <p className="text-sm text-white/50">أضف أصدقاء أولاً.</p> : friends.map((friend) => (
+                        <label key={friend.friendshipId} className={`flex cursor-pointer items-center justify-between gap-3 rounded-2xl border p-3 transition ${selectedGroupFriendIds.includes(friend.user.id) ? "border-emerald-300/60 bg-emerald-300/15" : "border-white/10 bg-black/20 hover:bg-black/30"}`}>
+                          <span>
+                            <span className="block font-black">{friend.label}</span>
+                            <span className="block text-xs text-emerald-300">@{friend.user.username}</span>
+                          </span>
+                          <input className="h-5 w-5 accent-emerald-300" type="checkbox" checked={selectedGroupFriendIds.includes(friend.user.id)} onChange={() => toggleGroupFriend(friend.user.id)} />
+                        </label>
+                      ))}
+                    </div>
+                    <button className={`${buttonClass()} mt-4 w-full`} disabled={busy || friends.length === 0}>إنشاء وإرسال الدعوات</button>
+                  </form>
+                  <div className="mt-4 rounded-2xl border border-white/10 bg-black/15 p-4">
+                    <h4 className="mb-3 font-black">دعوات القروبات {groupInvitations.length > 0 ? `(${groupInvitations.length})` : ""}</h4>
+                    {groupInvitations.length === 0 ? (
+                      <p className="text-sm text-white/50">ما عندك دعوات قروبات حالياً.</p>
+                    ) : (
+                      <div className="space-y-3">
+                        {groupInvitations.map((group) => (
+                          <div key={group.id} className="rounded-2xl bg-black/20 p-3">
+                            <p className="font-black">{group.name}</p>
+                            <p className="text-xs text-white/50">{group.members.length} أعضاء/مدعوين</p>
+                            <div className="mt-3 grid grid-cols-2 gap-2">
+                              <button className={`${buttonClass("primary")} py-2`} onClick={() => acceptGroupInvite(group)} disabled={busy} type="button">قبول</button>
+                              <button className={`${buttonClass("danger")} py-2`} onClick={() => rejectGroupInvite(group)} disabled={busy} type="button">رفض</button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
               </div>
 
-              <div className="rounded-[2rem] border border-white/10 bg-white/10 p-5 backdrop-blur">
-                <h3 className="mb-4 text-lg font-black">طلبات مرسلة</h3>
-                {outgoingRequests.length === 0 ? (
-                  <p className="text-sm text-white/50">ما فيه طلبات معلقة.</p>
-                ) : (
-                  <div className="space-y-2 text-sm text-white/70">
-                    {outgoingRequests.map((request) => (
-                      <p key={request.id}>بانتظار @{request.addressee?.username}</p>
+              <div className="space-y-5">
+                <div className="rounded-[2rem] border border-white/10 bg-white/10 p-5 backdrop-blur">
+                  <h3 className="mb-2 text-xl font-black">تنبيهات النظام</h3>
+                  <p className="mb-4 text-sm leading-6 text-white/55">فعلها عشان توصلك تنبيهات PWA من النظام حتى لو صفحة التطبيق مو مفتوحة.</p>
+                  <button className={`${buttonClass(pushEnabled ? "ghost" : "primary")} w-full`} onClick={enableSystemNotifications} disabled={busy}>
+                    {pushEnabled ? "تنبيهات النظام مفعلة على هذا الجهاز" : "تفعيل تنبيهات النظام"}
+                  </button>
+                  <button className={`${buttonClass("ghost")} mt-3 w-full`} onClick={testSystemNotifications} disabled={busy || !pushEnabled} type="button">اختبار تنبيه النظام</button>
+                  {!PUBLIC_VAPID_KEY ? <p className="mt-3 text-xs leading-5 text-amber-200">يحتاج إعداد VAPID في Vercel/Supabase قبل ما يشتغل على النسخة المنشورة.</p> : null}
+                </div>
+
+                <div className="rounded-[2rem] border border-white/10 bg-white/10 p-5 backdrop-blur">
+                  <h3 className="mb-2 text-xl font-black">صوت التنبيه</h3>
+                  <p className="mb-4 text-sm leading-6 text-white/55">اختر الصوت اللي تسمعه إذا وصلك تنبيه. الاختيار ينحفظ على هذا الجهاز.</p>
+                  <div className="space-y-2">
+                    {WAKE_SOUND_OPTIONS.map((option) => (
+                      <label key={option.id} className={`flex cursor-pointer items-start gap-3 rounded-2xl border p-3 transition ${wakeSound === option.id ? "border-emerald-300/60 bg-emerald-300/15" : "border-white/10 bg-black/20 hover:bg-black/30"}`}>
+                        <input className="mt-1 accent-emerald-300" type="radio" name="wake-sound" checked={wakeSound === option.id} onChange={() => changeWakeSound(option.id)} />
+                        <span><span className="block font-black">{option.label}</span><span className="block text-xs leading-5 text-white/55">{option.description}</span></span>
+                      </label>
                     ))}
                   </div>
-                )}
+                  <button className={`${buttonClass("ghost")} mt-4 w-full`} type="button" onClick={() => playWakeSound()}>تجربة الصوت</button>
+                </div>
+
+                <div className="rounded-[2rem] border border-white/10 bg-white/10 p-5 backdrop-blur">
+                  <h3 className="mb-2 text-xl font-black">الشكل</h3>
+                  <p className="mb-4 text-sm leading-6 text-white/55">اختر لون الخلفية المناسب لك. الاختيار محفوظ على هذا الجهاز.</p>
+                  <div className="grid grid-cols-2 gap-2">
+                    {THEME_OPTIONS.map((option) => (
+                      <button key={option.id} className={`rounded-2xl border px-4 py-3 text-sm font-black transition ${theme === option.id ? "border-emerald-300 bg-emerald-300 text-slate-950" : "border-white/10 bg-black/20 text-white hover:bg-black/30"}`} type="button" onClick={() => changeTheme(option.id)}>
+                        {option.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="rounded-[2rem] border border-white/10 bg-white/10 p-5 backdrop-blur">
+                  <h3 className="mb-2 text-xl font-black">وضع الهدوء</h3>
+                  <p className="mb-4 text-sm leading-6 text-white/55">إذا فعلته، تنبيهات النظام والصوت توقف في الوقت المحدد، لكن التنبيه يبقى محفوظ في التنبيهات الفائتة.</p>
+                  <label className="mb-4 flex cursor-pointer items-center justify-between gap-3 rounded-2xl bg-black/20 p-4">
+                    <span><span className="block font-black">تفعيل الهدوء</span><span className="block text-xs text-white/50">{quietActive ? "مفعل الآن" : "غير نشط الآن"}</span></span>
+                    <input className="h-5 w-5 accent-emerald-300" type="checkbox" checked={quietEnabled} onChange={(event) => updateQuietHours({ enabled: event.target.checked })} />
+                  </label>
+                  <div className="grid grid-cols-2 gap-3">
+                    <label className="block"><span className="mb-2 block text-xs text-white/60">من</span><input className="w-full rounded-2xl border border-white/10 bg-slate-950/70 px-3 py-3 text-white outline-none ring-emerald-300/50 focus:ring-4" type="time" value={quietStart} onChange={(event) => updateQuietHours({ start: event.target.value })} /></label>
+                    <label className="block"><span className="mb-2 block text-xs text-white/60">إلى</span><input className="w-full rounded-2xl border border-white/10 bg-slate-950/70 px-3 py-3 text-white outline-none ring-emerald-300/50 focus:ring-4" type="time" value={quietEnd} onChange={(event) => updateQuietHours({ end: event.target.value })} /></label>
+                  </div>
+                </div>
               </div>
             </div>
           </section>
         ) : null}
+
 
       </div>
     </main>
