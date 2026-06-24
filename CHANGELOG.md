@@ -4,6 +4,12 @@ All notable changes to Sa7i are documented here.
 
 Sa7i follows semantic versioning: `MAJOR.MINOR.PATCH`.
 
+## [0.3.1] - 2026-06-24
+
+### Security
+- Moved group RLS helper functions to a private schema so they are not exposed as public Supabase RPC endpoints.
+- Added a migration to drop the old public group helper functions after policy references are moved.
+
 ## [0.3.0] - 2026-06-24
 
 ### Added

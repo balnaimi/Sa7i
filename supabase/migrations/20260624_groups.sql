@@ -35,7 +35,11 @@ create trigger set_groups_updated_at
 before update on public.groups
 for each row execute function public.set_updated_at();
 
-create or replace function public.is_group_member(target_group_id uuid, target_profile_id uuid)
+create schema if not exists private;
+
+grant usage on schema private to authenticated;
+
+create or replace function private.is_group_member(target_group_id uuid, target_profile_id uuid)
 returns boolean
 language sql
 security definer
@@ -49,7 +53,7 @@ as $$
   );
 $$;
 
-create or replace function public.is_group_creator(target_group_id uuid, target_profile_id uuid)
+create or replace function private.is_group_creator(target_group_id uuid, target_profile_id uuid)
 returns boolean
 language sql
 security definer
@@ -62,6 +66,11 @@ as $$
       and g.created_by = target_profile_id
   );
 $$;
+
+revoke execute on function private.is_group_member(uuid, uuid) from public, anon;
+revoke execute on function private.is_group_creator(uuid, uuid) from public, anon;
+grant execute on function private.is_group_member(uuid, uuid) to authenticated;
+grant execute on function private.is_group_creator(uuid, uuid) to authenticated;
 
 alter table public.groups enable row level security;
 alter table public.group_members enable row level security;
@@ -76,7 +85,7 @@ drop policy if exists "members can update own group response" on public.group_me
 create policy "group members can read their groups"
 on public.groups for select
 to authenticated
-using (public.is_group_member(id, auth.uid()));
+using (private.is_group_member(id, auth.uid()));
 
 create policy "users can create groups"
 on public.groups for insert
@@ -94,7 +103,7 @@ on public.group_members for select
 to authenticated
 using (
   profile_id = auth.uid()
-  or public.is_group_member(group_id, auth.uid())
+  or private.is_group_member(group_id, auth.uid())
 );
 
 create policy "group creators can add accepted friends"
@@ -102,7 +111,7 @@ on public.group_members for insert
 to authenticated
 with check (
   auth.uid() = added_by
-  and public.is_group_creator(group_id, auth.uid())
+  and private.is_group_creator(group_id, auth.uid())
   and (
     profile_id = auth.uid()
     or exists (
