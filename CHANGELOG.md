@@ -4,6 +4,17 @@ All notable changes to Sa7i are documented here.
 
 Sa7i follows semantic versioning: `MAJOR.MINOR.PATCH`.
 
+## [0.3.0] - 2026-06-24
+
+### Added
+- Topical groups so a user can create a named event/topic and add accepted friends.
+- Group member dashboard with one card per member and clear yes/no/pending visual states.
+- Per-member group response controls using the same professional check/X visual language.
+- Supabase tables, indexes, realtime publication setup, and RLS policies for groups and group members.
+
+### Changed
+- README now lists group status cards as a core app capability.
+
 ## [0.2.0] - 2026-06-24
 
 ### Added

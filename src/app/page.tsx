@@ -2,11 +2,11 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createClient, hasSupabaseConfig } from "@/lib/supabase/client";
-import type { Friendship, Profile, WakeSignal, WakeSignalText } from "@/lib/types";
+import type { Friendship, GroupMember, GroupResponse, Profile, Sa7iGroup, WakeSignal, WakeSignalText } from "@/lib/types";
 
 const USERNAME_RE = /^[a-zA-Z0-9_]{3,24}$/;
 
-type View = "auth" | "home" | "invites" | "settings" | "missed";
+type View = "auth" | "home" | "groups" | "invites" | "settings" | "missed";
 type ToastTone = "ok" | "warn" | "error";
 type Toast = { tone: ToastTone; message: string } | null;
 type WakeSoundId = "classic" | "soft" | "urgent" | "chime";
@@ -46,6 +46,14 @@ type FriendRow = {
 
 type MissedSignal = WakeSignal & {
   sender?: Profile;
+};
+
+type GroupMemberWithProfile = GroupMember & {
+  profile?: Profile;
+};
+
+type GroupRow = Sa7iGroup & {
+  members: GroupMemberWithProfile[];
 };
 
 function formatSignalDate(value: string) {
@@ -275,6 +283,10 @@ export default function Home() {
   const [friends, setFriends] = useState<FriendRow[]>([]);
   const [incomingRequests, setIncomingRequests] = useState<Friendship[]>([]);
   const [outgoingRequests, setOutgoingRequests] = useState<Friendship[]>([]);
+  const [groups, setGroups] = useState<GroupRow[]>([]);
+  const [selectedGroup, setSelectedGroup] = useState<GroupRow | null>(null);
+  const [newGroupName, setNewGroupName] = useState("");
+  const [selectedGroupFriendIds, setSelectedGroupFriendIds] = useState<string[]>([]);
   const [selectedFriend, setSelectedFriend] = useState<FriendRow | null>(null);
   const [latestIncoming, setLatestIncoming] = useState<WakeSignal | null>(null);
   const [missedSignals, setMissedSignals] = useState<MissedSignal[]>([]);
@@ -544,6 +556,51 @@ export default function Home() {
     return signals;
   }
 
+  function friendLabelForProfile(profileId: string, friendRows = friends) {
+    const friend = friendRows.find((row) => row.user.id === profileId);
+    return friend?.label;
+  }
+
+  function memberDisplayName(member: GroupMemberWithProfile) {
+    if (member.profile_id === profile?.id) return profile.display_name || profile.username || "أنت";
+    return friendLabelForProfile(member.profile_id) || member.profile?.display_name || member.profile?.username || "عضو";
+  }
+
+  function groupCounts(group: GroupRow) {
+    return {
+      yes: group.members.filter((member) => member.response === "yes").length,
+      no: group.members.filter((member) => member.response === "no").length,
+      pending: group.members.filter((member) => !member.response).length,
+    };
+  }
+
+  async function loadGroups(userId: string, friendRows = friends) {
+    const { data, error } = await supabase
+      .from("groups")
+      .select("*, members:group_members(*, profile:profiles(*))")
+      .order("updated_at", { ascending: false });
+
+    if (error) {
+      notify(error.message, "error");
+      return [];
+    }
+
+    const loadedGroups = ((data ?? []) as unknown as GroupRow[]).map((group) => ({
+      ...group,
+      members: [...(group.members ?? [])].sort((a, b) => {
+        if (a.profile_id === userId) return -1;
+        if (b.profile_id === userId) return 1;
+        return (friendLabelForProfile(a.profile_id, friendRows) || a.profile?.username || "").localeCompare(
+          friendLabelForProfile(b.profile_id, friendRows) || b.profile?.username || "",
+          "ar"
+        );
+      }),
+    }));
+    setGroups(loadedGroups);
+    setSelectedGroup((current) => loadedGroups.find((group) => group.id === current?.id) ?? null);
+    return loadedGroups;
+  }
+
   async function loadEverything(userId: string) {
     const { data: myProfile, error: profileError } = await supabase
       .from("profiles")
@@ -610,6 +667,7 @@ export default function Home() {
     );
 
     await loadMissedSignals(userId);
+    await loadGroups(userId, friendsWithActivity);
     return friendsWithActivity;
   }
 
@@ -796,6 +854,30 @@ export default function Home() {
   }, [profile, supabase]);
 
   useEffect(() => {
+    if (!profile) return;
+
+    const channel = supabase
+      .channel(`groups-${profile.id}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "groups" },
+        () => loadGroups(profile.id)
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "group_members" },
+        () => loadGroups(profile.id)
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  // Group membership/response changes should refresh the group cards for this user.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [friends, profile, supabase]);
+
+  useEffect(() => {
     if (!profile || !selectedFriend) return;
 
     let cancelled = false;
@@ -893,6 +975,8 @@ export default function Home() {
     setFriends([]);
     setIncomingRequests([]);
     setOutgoingRequests([]);
+    setGroups([]);
+    setSelectedGroup(null);
     setSelectedFriend(null);
     setMissedSignals([]);
     setPendingSignalCount(0);
@@ -973,6 +1057,82 @@ export default function Home() {
       notify("تم تحديث الاسم الظاهر لهذا الصديق.");
     } catch (error) {
       notify(error instanceof Error ? error.message : "تعذر تحديث الاسم الظاهر.", "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function toggleGroupFriend(friendId: string) {
+    setSelectedGroupFriendIds((ids) =>
+      ids.includes(friendId) ? ids.filter((id) => id !== friendId) : [...ids, friendId]
+    );
+  }
+
+  async function createGroup(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!profile) return;
+    const name = newGroupName.trim();
+    if (!name) {
+      notify("اكتب اسم القروب أولاً.", "error");
+      return;
+    }
+    if (selectedGroupFriendIds.length === 0) {
+      notify("اختر صديق واحد على الأقل للقروب.", "error");
+      return;
+    }
+
+    setBusy(true);
+    try {
+      const groupId = crypto.randomUUID();
+      const { error: groupError } = await supabase.from("groups").insert({
+        id: groupId,
+        created_by: profile.id,
+        name,
+      });
+      if (groupError) throw groupError;
+
+      const memberRows = [profile.id, ...selectedGroupFriendIds].map((profileId) => ({
+        group_id: groupId,
+        profile_id: profileId,
+        added_by: profile.id,
+      }));
+      const { error: membersError } = await supabase.from("group_members").insert(memberRows);
+      if (membersError) throw membersError;
+
+      setNewGroupName("");
+      setSelectedGroupFriendIds([]);
+      const loadedGroups = await loadGroups(profile.id);
+      setSelectedGroup(loadedGroups.find((group) => group.id === groupId) ?? null);
+      notify("تم إنشاء القروب.");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "تعذر إنشاء القروب.", "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function updateGroupResponse(group: GroupRow, response: Exclude<GroupResponse, null>) {
+    if (!profile) return;
+    setBusy(true);
+    try {
+      const { error } = await supabase
+        .from("group_members")
+        .update({ response, responded_at: new Date().toISOString() })
+        .eq("group_id", group.id)
+        .eq("profile_id", profile.id);
+      if (error) throw error;
+
+      const updateGroup = (row: GroupRow): GroupRow => ({
+        ...row,
+        members: row.members.map((member) =>
+          member.profile_id === profile.id ? { ...member, response, responded_at: new Date().toISOString() } : member
+        ),
+      });
+      setGroups((rows) => rows.map((row) => row.id === group.id ? updateGroup(row) : row));
+      setSelectedGroup((current) => current?.id === group.id ? updateGroup(current) : current);
+      notify(response === "yes" ? "تم تسجيل حضورك." : "تم تسجيل عدم حضورك.", response === "yes" ? "ok" : "warn");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "تعذر تحديث ردك.", "error");
     } finally {
       setBusy(false);
     }
@@ -1257,6 +1417,9 @@ export default function Home() {
               <button className={buttonClass(view === "home" ? "primary" : "ghost")} onClick={() => setView("home")}>
                 الأصدقاء
               </button>
+              <button className={buttonClass(view === "groups" ? "primary" : "ghost")} onClick={() => setView("groups")}>
+                القروبات {groups.length > 0 ? `(${groups.length})` : ""}
+              </button>
               <button className={buttonClass(view === "missed" ? "primary" : "ghost")} onClick={() => setView("missed")}>
                 تنبيهات فائتة {pendingSignalCount > 0 ? `(${pendingSignalCount})` : ""}
               </button>
@@ -1438,6 +1601,176 @@ export default function Home() {
                       </div>
                     );
                   })}
+                </div>
+              )}
+            </div>
+          </section>
+        ) : null}
+
+        {view === "groups" ? (
+          <section className="grid flex-1 gap-5 py-8 lg:grid-cols-[0.9fr_1.1fr]">
+            <div className="space-y-5">
+              <form className="rounded-[2rem] border border-white/10 bg-white/10 p-5 backdrop-blur sm:p-6" onSubmit={createGroup}>
+                <h2 className="mb-2 text-2xl font-black">قروب جديد</h2>
+                <p className="mb-5 text-sm leading-6 text-white/55">
+                  سمّ القروب حسب الموضوع، واختر الأصدقاء اللي بتأكد حضورهم.
+                </p>
+                <label className="block">
+                  <span className="mb-2 block text-sm text-white/70">اسم القروب</span>
+                  <input
+                    className="w-full rounded-2xl border border-white/10 bg-slate-950/70 px-4 py-3 text-white outline-none ring-emerald-300/50 focus:ring-4"
+                    value={newGroupName}
+                    onChange={(event) => setNewGroupName(event.target.value)}
+                    placeholder="مثال: سينما الخميس"
+                    maxLength={80}
+                  />
+                </label>
+
+                <div className="mt-5">
+                  <p className="mb-3 text-sm font-black text-white">اختر الأعضاء</p>
+                  {friends.length === 0 ? (
+                    <p className="rounded-2xl bg-black/20 p-4 text-sm text-white/55">
+                      أضف أصدقاء أولاً، وبعدها تقدر تسوي قروب.
+                    </p>
+                  ) : (
+                    <div className="max-h-72 space-y-2 overflow-auto pr-1">
+                      {friends.map((friend) => (
+                        <label
+                          key={friend.friendshipId}
+                          className={`flex cursor-pointer items-center justify-between gap-3 rounded-2xl border p-3 transition ${
+                            selectedGroupFriendIds.includes(friend.user.id)
+                              ? "border-emerald-300/60 bg-emerald-300/15"
+                              : "border-white/10 bg-black/20 hover:bg-black/30"
+                          }`}
+                        >
+                          <span>
+                            <span className="block font-black">{friend.label}</span>
+                            <span className="block text-xs text-emerald-300">@{friend.user.username}</span>
+                          </span>
+                          <input
+                            className="h-5 w-5 accent-emerald-300"
+                            type="checkbox"
+                            checked={selectedGroupFriendIds.includes(friend.user.id)}
+                            onChange={() => toggleGroupFriend(friend.user.id)}
+                          />
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <button className={`${buttonClass()} mt-5 w-full`} disabled={busy || friends.length === 0}>
+                  إنشاء القروب
+                </button>
+              </form>
+
+              <div className="rounded-[2rem] border border-white/10 bg-white/10 p-5 backdrop-blur sm:p-6">
+                <h2 className="mb-4 text-2xl font-black">قروباتك</h2>
+                {groups.length === 0 ? (
+                  <p className="rounded-2xl border border-dashed border-white/15 bg-black/10 p-6 text-center text-sm text-white/55">
+                    ما عندك قروبات حالياً.
+                  </p>
+                ) : (
+                  <div className="space-y-3">
+                    {groups.map((group) => {
+                      const counts = groupCounts(group);
+                      return (
+                        <button
+                          key={group.id}
+                          className={`w-full rounded-2xl border p-4 text-right transition ${
+                            selectedGroup?.id === group.id
+                              ? "border-emerald-300/60 bg-emerald-300/15"
+                              : "border-white/10 bg-slate-950/60 hover:border-emerald-300/40 hover:bg-slate-900"
+                          }`}
+                          onClick={() => setSelectedGroup(group)}
+                          type="button"
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <p className="text-lg font-black">{group.name}</p>
+                              <p className="text-xs text-white/50">{group.members.length} أعضاء</p>
+                            </div>
+                            <div className="flex gap-1 text-xs font-black">
+                              <span className="rounded-full bg-emerald-400 px-2 py-1 text-slate-950">{counts.yes}</span>
+                              <span className="rounded-full bg-rose-500 px-2 py-1 text-white">{counts.no}</span>
+                              <span className="rounded-full bg-white/15 px-2 py-1 text-white">{counts.pending}</span>
+                            </div>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="rounded-[2rem] border border-white/10 bg-white/10 p-5 backdrop-blur sm:p-8">
+              {selectedGroup ? (
+                <div>
+                  <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div>
+                      <p className="text-sm font-semibold text-emerald-300">قروب</p>
+                      <h2 className="text-3xl font-black">{selectedGroup.name}</h2>
+                      <p className="mt-2 text-sm text-white/55">
+                        اضغط صح أو خطأ عشان توضح حضورك بدون كلام.
+                      </p>
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        className={`${buttonClass("primary")} py-2`}
+                        onClick={() => updateGroupResponse(selectedGroup, "yes")}
+                        disabled={busy}
+                        type="button"
+                      >
+                        صح / بحضر
+                      </button>
+                      <button
+                        className={`${buttonClass("danger")} py-2`}
+                        onClick={() => updateGroupResponse(selectedGroup, "no")}
+                        disabled={busy}
+                        type="button"
+                      >
+                        لا / ما بحضر
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                    {selectedGroup.members.map((member) => {
+                      const tone = member.response === "yes"
+                        ? "border-emerald-300/50 bg-emerald-400 text-slate-950 shadow-emerald-400/20"
+                        : member.response === "no"
+                          ? "border-rose-300/50 bg-rose-500 text-white shadow-rose-500/20"
+                          : "border-white/10 bg-slate-950/60 text-white";
+                      const responseText = member.response === "yes" ? "بيحضر" : member.response === "no" ? "ما بيحضر" : "ما رد";
+                      return (
+                        <div key={member.id} className={`min-h-36 rounded-3xl border p-4 shadow-lg ${tone}`}>
+                          <div className="flex h-full flex-col justify-between gap-4">
+                            <div>
+                              <p className="text-lg font-black">{memberDisplayName(member)}</p>
+                              <p className={`text-xs ${member.response === "yes" ? "text-slate-800" : "text-white/60"}`}>
+                                @{member.profile?.username || "member"}
+                              </p>
+                            </div>
+                            <div className="flex items-center justify-between gap-3">
+                              <span className="text-sm font-black">{responseText}</span>
+                              {member.response === "yes" ? (
+                                <ReplyStatusIcon text="✅" className="h-10 w-10" />
+                              ) : member.response === "no" ? (
+                                <ReplyStatusIcon text="❌" className="h-10 w-10" />
+                              ) : (
+                                <span className="grid h-10 w-10 place-items-center rounded-2xl border border-white/15 text-xl text-white/40">؟</span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : (
+                <div className="grid min-h-[520px] place-items-center rounded-[2rem] border border-dashed border-white/15 bg-black/10 p-8 text-center text-white/55">
+                  اختر قروب من القائمة أو أنشئ قروب جديد.
                 </div>
               )}
             </div>

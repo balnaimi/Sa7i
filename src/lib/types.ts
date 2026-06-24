@@ -31,3 +31,24 @@ export type WakeSignal = {
   seen_at: string | null;
   created_at: string;
 };
+
+export type GroupResponse = "yes" | "no" | null;
+
+export type Sa7iGroup = {
+  id: string;
+  created_by: string;
+  name: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type GroupMember = {
+  id: string;
+  group_id: string;
+  profile_id: string;
+  added_by: string;
+  response: GroupResponse;
+  responded_at: string | null;
+  created_at: string;
+  profile?: Profile;
+};
