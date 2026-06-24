@@ -130,6 +130,7 @@ drop policy if exists "users can update their own profile" on public.profiles;
 drop policy if exists "friendships are readable by participants" on public.friendships;
 drop policy if exists "users can request friendship" on public.friendships;
 drop policy if exists "addressee can accept friendship" on public.friendships;
+drop policy if exists "participants can update own accepted friend label" on public.friendships;
 drop policy if exists "participants can delete pending friendship" on public.friendships;
 drop policy if exists "wake signals readable by sender or receiver" on public.wake_signals;
 drop policy if exists "friends can send wake signals" on public.wake_signals;
@@ -167,6 +168,18 @@ on public.friendships for update
 to authenticated
 using (auth.uid() = addressee_id and status = 'pending')
 with check (auth.uid() = addressee_id and status = 'accepted');
+
+create policy "participants can update own accepted friend label"
+on public.friendships for update
+to authenticated
+using (
+  status = 'accepted'
+  and (auth.uid() = requester_id or auth.uid() = addressee_id)
+)
+with check (
+  status = 'accepted'
+  and (auth.uid() = requester_id or auth.uid() = addressee_id)
+);
 
 create policy "participants can delete pending friendship"
 on public.friendships for delete

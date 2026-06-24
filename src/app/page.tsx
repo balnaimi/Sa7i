@@ -40,6 +40,7 @@ type FriendRow = {
   friendshipId: string;
   user: Profile;
   label: string;
+  isRequester: boolean;
   lastSignal?: WakeSignal;
 };
 
@@ -280,6 +281,7 @@ export default function Home() {
   const [pendingSignalCount, setPendingSignalCount] = useState(0);
   const [friendCode, setFriendCode] = useState("");
   const [friendLabel, setFriendLabel] = useState("");
+  const [friendLabelEdits, setFriendLabelEdits] = useState<Record<string, string>>({});
   const [acceptLabels, setAcceptLabels] = useState<Record<string, string>>({});
   const [quietEnabled, setQuietEnabled] = useState(() => {
     if (typeof window === "undefined") return false;
@@ -576,6 +578,7 @@ export default function Home() {
           friendshipId: row.id,
           user,
           label,
+          isRequester,
         };
       });
 
@@ -933,6 +936,43 @@ export default function Home() {
       notify("تم إرسال طلب الإضافة.");
     } catch (error) {
       notify(error instanceof Error ? error.message : "تعذر إرسال الطلب.", "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function saveFriendLabel(friend: FriendRow) {
+    if (!profile) return;
+    const fallbackLabel = friend.user.display_name || friend.user.username;
+    const label = (friendLabelEdits[friend.friendshipId] ?? friend.label).trim() || fallbackLabel;
+    const labelColumn = friend.isRequester ? "requester_label" : "addressee_label";
+    const ownerColumn = friend.isRequester ? "requester_id" : "addressee_id";
+
+    setBusy(true);
+    try {
+      const { error } = await supabase
+        .from("friendships")
+        .update({ [labelColumn]: label })
+        .eq("id", friend.friendshipId)
+        .eq(ownerColumn, profile.id)
+        .eq("status", "accepted");
+      if (error) throw error;
+
+      setFriends((rows) =>
+        rows.map((row) => row.friendshipId === friend.friendshipId ? { ...row, label } : row)
+      );
+      setSelectedFriend((current) =>
+        current?.friendshipId === friend.friendshipId ? { ...current, label } : current
+      );
+      setFriendLabelEdits((labels) => {
+        const next = { ...labels };
+        delete next[friend.friendshipId];
+        return next;
+      });
+      await loadEverything(profile.id);
+      notify("تم تحديث الاسم الظاهر لهذا الصديق.");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "تعذر تحديث الاسم الظاهر.", "error");
     } finally {
       setBusy(false);
     }
@@ -1332,28 +1372,72 @@ export default function Home() {
                 </div>
               ) : (
                 <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                  {friends.map((friend) => (
-                    <button
-                      key={friend.friendshipId}
-                      className="rounded-3xl border border-white/10 bg-slate-950/60 p-5 text-right transition hover:-translate-y-1 hover:border-emerald-300/40 hover:bg-slate-900"
-                      onClick={() => chooseFriend(friend)}
-                    >
-                      <p className="text-xl font-black">{friend.label}</p>
-                      <p className="text-sm text-emerald-300">@{friend.user.username}</p>
-                      <div className="mt-4 flex items-center justify-between gap-2 rounded-2xl bg-black/20 px-3 py-2 text-xs text-white/60">
-                        <span className="flex items-center gap-2">
-                          {friend.lastSignal && isEmojiReply(friend.lastSignal.text) ? (
-                            <ReplyStatusIcon text={friend.lastSignal.text} className="h-4 w-4 text-emerald-200" />
+                  {friends.map((friend) => {
+                    const editedLabel = friendLabelEdits[friend.friendshipId] ?? friend.label;
+                    const labelChanged = editedLabel.trim() !== friend.label;
+
+                    return (
+                      <div
+                        key={friend.friendshipId}
+                        className="rounded-3xl border border-white/10 bg-slate-950/60 p-5 text-right transition hover:-translate-y-1 hover:border-emerald-300/40 hover:bg-slate-900"
+                      >
+                        <button className="block w-full text-right" onClick={() => chooseFriend(friend)} type="button">
+                          <p className="text-xl font-black">{friend.label}</p>
+                          <p className="text-sm text-emerald-300">@{friend.user.username}</p>
+                          <div className="mt-4 flex items-center justify-between gap-2 rounded-2xl bg-black/20 px-3 py-2 text-xs text-white/60">
+                            <span className="flex items-center gap-2">
+                              {friend.lastSignal && isEmojiReply(friend.lastSignal.text) ? (
+                                <ReplyStatusIcon text={friend.lastSignal.text} className="h-4 w-4 text-emerald-200" />
+                              ) : null}
+                              <span>{friend.lastSignal ? `آخر تفاعل: ${signalDisplayLabel(friend.lastSignal.text)}` : "لا يوجد نشاط"}</span>
+                            </span>
+                            <span>{formatRelativeTime(friend.lastSignal?.created_at)}</span>
+                          </div>
+                          {mutedFriendIds.includes(friend.user.id) ? (
+                            <p className="mt-2 text-xs text-amber-200">مكتوم على هذا الجهاز</p>
                           ) : null}
-                          <span>{friend.lastSignal ? `آخر تفاعل: ${signalDisplayLabel(friend.lastSignal.text)}` : "لا يوجد نشاط"}</span>
-                        </span>
-                        <span>{formatRelativeTime(friend.lastSignal?.created_at)}</span>
+                        </button>
+
+                        <div className="mt-4 rounded-2xl border border-white/10 bg-black/20 p-3">
+                          <label className="block">
+                            <span className="mb-2 block text-xs text-white/55">الاسم اللي يظهر عندك</span>
+                            <input
+                              className="w-full rounded-xl border border-white/10 bg-slate-950/70 px-3 py-2 text-sm text-white outline-none ring-emerald-300/50 focus:ring-4"
+                              value={editedLabel}
+                              onChange={(event) =>
+                                setFriendLabelEdits((labels) => ({
+                                  ...labels,
+                                  [friend.friendshipId]: event.target.value,
+                                }))
+                              }
+                              maxLength={40}
+                              placeholder={friend.user.display_name || friend.user.username}
+                            />
+                          </label>
+                          <div className="mt-3 grid grid-cols-2 gap-2">
+                            <button
+                              className={`${buttonClass(labelChanged ? "primary" : "ghost")} py-2`}
+                              onClick={() => saveFriendLabel(friend)}
+                              disabled={busy || !labelChanged}
+                              type="button"
+                            >
+                              حفظ الاسم
+                            </button>
+                            <button
+                              className={`${buttonClass("ghost")} py-2`}
+                              onClick={() =>
+                                setFriendLabelEdits((labels) => ({ ...labels, [friend.friendshipId]: friend.label }))
+                              }
+                              disabled={busy || !labelChanged}
+                              type="button"
+                            >
+                              إلغاء
+                            </button>
+                          </div>
+                        </div>
                       </div>
-                      {mutedFriendIds.includes(friend.user.id) ? (
-                        <p className="mt-2 text-xs text-amber-200">مكتوم على هذا الجهاز</p>
-                      ) : null}
-                    </button>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>
