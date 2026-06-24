@@ -15,20 +15,6 @@ create table if not exists public.profiles (
   constraint profiles_invite_code_format check (invite_code ~ '^[A-F0-9]{8}$')
 );
 
-alter table public.profiles
-add column if not exists invite_code text;
-
-update public.profiles
-set invite_code = upper(substr(replace(gen_random_uuid()::text, '-', ''), 1, 8))
-where invite_code is null;
-
-alter table public.profiles
-alter column invite_code set not null,
-alter column invite_code set default upper(substr(replace(gen_random_uuid()::text, '-', ''), 1, 8));
-
-create unique index if not exists profiles_invite_code_key
-on public.profiles (invite_code);
-
 create table if not exists public.friendships (
   id uuid primary key default gen_random_uuid(),
   requester_id uuid not null references public.profiles(id) on delete cascade,

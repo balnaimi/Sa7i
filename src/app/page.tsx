@@ -175,6 +175,91 @@ function buttonClass(variant: "primary" | "ghost" | "danger" = "primary") {
   return `${base} bg-emerald-400 text-slate-950 shadow-lg shadow-emerald-400/25 hover:bg-emerald-300`;
 }
 
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string) {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) => {
+      window.setTimeout(() => reject(new Error(message)), timeoutMs);
+    }),
+  ]);
+}
+
+
+function ToastBanner({ toast }: { toast: Toast }) {
+  if (!toast) return null;
+
+  const toneClass =
+    toast.tone === "error"
+      ? "border-rose-400/40 bg-rose-950/90 text-rose-50"
+      : toast.tone === "warn"
+        ? "border-amber-300/40 bg-amber-950/90 text-amber-50"
+        : "border-emerald-300/40 bg-emerald-950/90 text-emerald-50";
+
+  return (
+    <div className={`fixed left-5 top-5 z-50 max-w-sm rounded-2xl border px-5 py-4 text-sm shadow-2xl backdrop-blur ${toneClass}`}>
+      {toast.message}
+    </div>
+  );
+}
+
+function InviteCodeCard({ inviteCode, onCopy }: { inviteCode?: string; onCopy: () => void }) {
+  return (
+    <div className="rounded-3xl border border-emerald-300/20 bg-emerald-300/10 p-4">
+      <p className="text-xs text-white/60">كود الإضافة الخاص فيك</p>
+      <button
+        className="mt-2 w-full rounded-xl bg-slate-950/70 px-4 py-3 font-mono text-2xl font-black tracking-[0.35em] text-emerald-200"
+        onClick={onCopy}
+        title="اضغط لنسخ الكود"
+        type="button"
+      >
+        {inviteCode || "--------"}
+      </button>
+      <p className="mt-2 text-xs leading-5 text-white/50">أرسل هذا الكود لصديقك عشان يضيفك.</p>
+    </div>
+  );
+}
+
+function AddFriendForm({
+  friendCode,
+  friendLabel,
+  busy,
+  onSubmit,
+  onFriendCodeChange,
+  onFriendLabelChange,
+}: {
+  friendCode: string;
+  friendLabel: string;
+  busy: boolean;
+  onSubmit: (event: React.FormEvent<HTMLFormElement>) => void;
+  onFriendCodeChange: (value: string) => void;
+  onFriendLabelChange: (value: string) => void;
+}) {
+  return (
+    <form className="rounded-3xl border border-white/10 bg-white/10 p-4" onSubmit={onSubmit}>
+      <p className="mb-3 text-sm font-black text-white">كود صديقك</p>
+      <input
+        className="mb-3 w-full rounded-2xl border border-white/10 bg-slate-950/70 px-4 py-3 font-mono text-lg tracking-[0.25em] text-white outline-none ring-emerald-300/50 placeholder:font-sans placeholder:tracking-normal focus:ring-4"
+        value={friendCode}
+        onChange={(event) => onFriendCodeChange(event.target.value.toUpperCase())}
+        placeholder="مثال: A1B2C3D4"
+        inputMode="text"
+        maxLength={8}
+        dir="ltr"
+      />
+      <input
+        className="mb-3 w-full rounded-2xl border border-white/10 bg-slate-950/70 px-4 py-3 text-white outline-none ring-emerald-300/50 focus:ring-4"
+        value={friendLabel}
+        onChange={(event) => onFriendLabelChange(event.target.value)}
+        placeholder="الاسم اللي بيظهر عندك لهذا الشخص"
+        maxLength={40}
+      />
+      <button className={`${buttonClass()} w-full`} disabled={busy}>
+        إرسال طلب
+      </button>
+    </form>
+  );
+}
+
 export default function Home() {
   const supabase = useMemo(() => createClient(), []);
   const configured = hasSupabaseConfig();
@@ -214,7 +299,7 @@ export default function Home() {
     return WAKE_SOUND_OPTIONS.some((option) => option.id === savedSound) ? (savedSound as WakeSoundId) : "classic";
   });
   const [pushEnabled, setPushEnabled] = useState(false);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState<Toast>(null);
 
@@ -591,26 +676,40 @@ export default function Home() {
         setLoading(false);
         return;
       }
-      setLoading(true);
-      const { data } = await supabase.auth.getUser();
-      if (!mounted) return;
 
-      if (data.user) {
-        try {
-          const loadedFriends = await loadEverything(data.user.id);
-          const notificationFriendId = new URLSearchParams(window.location.search).get("friend");
-          const notificationFriend = loadedFriends.find((friend) => friend.user.id === notificationFriendId);
-          if (notificationFriend) {
-            await openFriendFromNotification(notificationFriend, data.user.id);
-          } else {
-            setView("home");
+      setLoading(true);
+      try {
+        const { data, error } = await withTimeout(
+          supabase.auth.getUser(),
+          8000,
+          "Supabase auth bootstrap timed out"
+        );
+        if (!mounted) return;
+        if (error) throw error;
+
+        if (data.user) {
+          try {
+            const loadedFriends = await loadEverything(data.user.id);
+            const notificationFriendId = new URLSearchParams(window.location.search).get("friend");
+            const notificationFriend = loadedFriends.find((friend) => friend.user.id === notificationFriendId);
+            if (notificationFriend) {
+              await openFriendFromNotification(notificationFriend, data.user.id);
+            } else {
+              setView("home");
+            }
+          } catch {
+            await supabase.auth.signOut();
+            setView("auth");
           }
-        } catch {
-          await supabase.auth.signOut();
-          setView("auth");
         }
+      } catch {
+        if (mounted) {
+          setView("auth");
+          notify("تعذر الاتصال بـ Supabase. تأكد من إعدادات البيئة أو جرّب لاحقاً.", "error");
+        }
+      } finally {
+        if (mounted) setLoading(false);
       }
-      setLoading(false);
     }
 
     bootstrap();
@@ -979,6 +1078,12 @@ export default function Home() {
     await chooseFriend(friend);
   }
 
+  async function copyInviteCode() {
+    if (!profile?.invite_code) return;
+    await navigator.clipboard?.writeText(profile.invite_code);
+    notify("تم نسخ كود الإضافة.");
+  }
+
   async function clearMissedSignals() {
     if (!profile || missedSignals.length === 0) return;
     setBusy(true);
@@ -1031,19 +1136,7 @@ export default function Home() {
             </div>
           </div>
 
-          {toast ? (
-            <div
-              className={`fixed left-5 top-5 z-50 max-w-sm rounded-2xl border px-5 py-4 text-sm shadow-2xl backdrop-blur ${
-                toast.tone === "error"
-                  ? "border-rose-400/40 bg-rose-950/90 text-rose-50"
-                  : toast.tone === "warn"
-                    ? "border-amber-300/40 bg-amber-950/90 text-amber-50"
-                    : "border-emerald-300/40 bg-emerald-950/90 text-emerald-50"
-              }`}
-            >
-              {toast.message}
-            </div>
-          ) : null}
+          <ToastBanner toast={toast} />
 
           <section className="flex flex-1 items-center justify-center py-6 text-center sm:py-8">
             <div className="flex w-full max-w-md flex-col items-center">
@@ -1114,8 +1207,8 @@ export default function Home() {
   return (
     <main className={`min-h-screen overflow-hidden ${themeClass} text-white`} dir="rtl">
       <div className="mx-auto flex min-h-screen w-full max-w-6xl flex-col px-5 py-6 sm:px-8">
-        <header className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div>
+        <header className={`flex flex-col gap-4 ${profile ? "sm:flex-row sm:items-center sm:justify-between" : "items-center text-center"}`}>
+          <div className={profile ? undefined : "mx-auto max-w-xl"}>
             <p className="text-sm font-semibold text-emerald-300">Sa7i / صاحي</p>
             <h1 className="text-3xl font-black tracking-tight sm:text-5xl">زر واحد يكفي</h1>
           </div>
@@ -1140,19 +1233,7 @@ export default function Home() {
           ) : null}
         </header>
 
-        {toast ? (
-          <div
-            className={`fixed left-5 top-5 z-50 max-w-sm rounded-2xl border px-5 py-4 text-sm shadow-2xl backdrop-blur ${
-              toast.tone === "error"
-                ? "border-rose-400/40 bg-rose-950/90 text-rose-50"
-                : toast.tone === "warn"
-                  ? "border-amber-300/40 bg-amber-950/90 text-amber-50"
-                  : "border-emerald-300/40 bg-emerald-950/90 text-emerald-50"
-            }`}
-          >
-            {toast.message}
-          </div>
-        ) : null}
+        <ToastBanner toast={toast} />
 
         {view === "auth" ? (
           <section className="grid flex-1 place-items-center py-12">
@@ -1237,44 +1318,16 @@ export default function Home() {
                   </div>
 
                   <div className="grid gap-4 lg:grid-cols-2">
-                    <div className="rounded-3xl border border-emerald-300/20 bg-emerald-300/10 p-4">
-                      <p className="text-xs text-white/60">كودك أنت</p>
-                      <button
-                        className="mt-2 w-full rounded-xl bg-slate-950/70 px-4 py-3 font-mono text-2xl font-black tracking-[0.35em] text-emerald-200"
-                        onClick={async () => {
-                          if (!profile?.invite_code) return;
-                          await navigator.clipboard?.writeText(profile.invite_code);
-                          notify("تم نسخ كود الإضافة.");
-                        }}
-                        title="اضغط لنسخ الكود"
-                      >
-                        {profile?.invite_code}
-                      </button>
-                      <p className="mt-2 text-xs leading-5 text-white/50">أرسل هذا الكود لصديقك عشان يضيفك.</p>
-                    </div>
+                    <InviteCodeCard inviteCode={profile?.invite_code} onCopy={() => void copyInviteCode()} />
 
-                    <form className="rounded-3xl border border-white/10 bg-white/10 p-4" onSubmit={addFriend}>
-                      <p className="mb-3 text-sm font-black text-white">كود صديقك</p>
-                      <input
-                        className="mb-3 w-full rounded-2xl border border-white/10 bg-slate-950/70 px-4 py-3 font-mono text-lg tracking-[0.25em] text-white outline-none ring-emerald-300/50 placeholder:font-sans placeholder:tracking-normal focus:ring-4"
-                        value={friendCode}
-                        onChange={(event) => setFriendCode(event.target.value.toUpperCase())}
-                        placeholder="مثال: A1B2C3D4"
-                        inputMode="text"
-                        maxLength={8}
-                        dir="ltr"
-                      />
-                      <input
-                        className="mb-3 w-full rounded-2xl border border-white/10 bg-slate-950/70 px-4 py-3 text-white outline-none ring-emerald-300/50 focus:ring-4"
-                        value={friendLabel}
-                        onChange={(event) => setFriendLabel(event.target.value)}
-                        placeholder="الاسم اللي بيظهر عندك لهذا الشخص"
-                        maxLength={40}
-                      />
-                      <button className={`${buttonClass()} w-full`} disabled={busy}>
-                        إرسال طلب
-                      </button>
-                    </form>
+                    <AddFriendForm
+                      friendCode={friendCode}
+                      friendLabel={friendLabel}
+                      busy={busy}
+                      onSubmit={addFriend}
+                      onFriendCodeChange={setFriendCode}
+                      onFriendLabelChange={setFriendLabel}
+                    />
                   </div>
                 </div>
               ) : (
@@ -1504,45 +1557,20 @@ export default function Home() {
                 <p className="text-sm leading-6 text-white/55">
                   هنا كل شيء يخص إضافة الأصدقاء: كودك، إرسال طلب، قبول أو رفض الدعوات.
                 </p>
-                <div className="mt-4 rounded-2xl border border-emerald-300/20 bg-emerald-300/10 p-4">
-                  <p className="text-xs text-white/60">كود الإضافة الخاص فيك</p>
-                  <button
-                    className="mt-2 w-full rounded-xl bg-slate-950/70 px-4 py-3 font-mono text-2xl font-black tracking-[0.35em] text-emerald-200"
-                    onClick={async () => {
-                      if (!profile?.invite_code) return;
-                      await navigator.clipboard?.writeText(profile.invite_code);
-                      notify("تم نسخ كود الإضافة.");
-                    }}
-                    title="اضغط لنسخ الكود"
-                  >
-                    {profile?.invite_code}
-                  </button>
-                  <p className="mt-2 text-xs leading-5 text-white/50">أرسل هذا الكود لصديقك عشان يضيفك.</p>
-                </div>
+                <div className="mt-4"><InviteCodeCard inviteCode={profile?.invite_code} onCopy={() => void copyInviteCode()} /></div>
               </div>
 
-              <form className="rounded-[2rem] border border-white/10 bg-white/10 p-5 backdrop-blur" onSubmit={addFriend}>
+              <div className="rounded-[2rem] border border-white/10 bg-white/10 p-5 backdrop-blur">
                 <h3 className="mb-4 text-lg font-black">إضافة شخص بالكود</h3>
-                <input
-                  className="mb-3 w-full rounded-2xl border border-white/10 bg-slate-950/70 px-4 py-3 font-mono text-lg tracking-[0.25em] text-white outline-none ring-emerald-300/50 placeholder:font-sans placeholder:tracking-normal focus:ring-4"
-                  value={friendCode}
-                  onChange={(event) => setFriendCode(event.target.value.toUpperCase())}
-                  placeholder="مثال: A1B2C3D4"
-                  inputMode="text"
-                  maxLength={8}
-                  dir="ltr"
+                <AddFriendForm
+                  friendCode={friendCode}
+                  friendLabel={friendLabel}
+                  busy={busy}
+                  onSubmit={addFriend}
+                  onFriendCodeChange={setFriendCode}
+                  onFriendLabelChange={setFriendLabel}
                 />
-                <input
-                  className="mb-3 w-full rounded-2xl border border-white/10 bg-slate-950/70 px-4 py-3 text-white outline-none ring-emerald-300/50 focus:ring-4"
-                  value={friendLabel}
-                  onChange={(event) => setFriendLabel(event.target.value)}
-                  placeholder="الاسم اللي بيظهر عندك لهذا الشخص"
-                  maxLength={40}
-                />
-                <button className={`${buttonClass()} w-full`} disabled={busy}>
-                  إرسال طلب
-                </button>
-              </form>
+              </div>
             </div>
 
             <div className="space-y-5">
