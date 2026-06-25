@@ -4,6 +4,13 @@ All notable changes to شالترتيب!؟ are documented here.
 
 شالترتيب!؟ follows semantic versioning: `MAJOR.MINOR.PATCH`.
 
+## [0.7.0] - 2026-06-26
+
+### Added
+- Group creation now includes an interactive map picker for choosing the group location.
+- Group detail pages show a mini embedded map when a location is selected.
+- Stored map coordinates on groups with a Supabase migration for existing projects.
+
 ## [0.6.2] - 2026-06-25
 
 ### Fixed

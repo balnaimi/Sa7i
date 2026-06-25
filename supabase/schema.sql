@@ -43,6 +43,8 @@ create table if not exists public.groups (
   event_time time,
   location_name text,
   location_url text,
+  location_lat double precision,
+  location_lng double precision,
   visibility text not null default 'private' check (visibility in ('public', 'private')),
   allow_join_requests boolean not null default false,
   total_amount numeric(12,2) check (total_amount is null or total_amount >= 0),

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createClient, hasSupabaseConfig } from "@/lib/supabase/client";
 import type {
   Friendship,
@@ -38,6 +38,20 @@ type GroupRow = ShaltarteebGroup & {
   members: GroupMemberWithProfile[];
   join_requests?: GroupJoinRequestWithProfile[];
 };
+
+type MapPoint = { lat: number; lng: number };
+
+const DEFAULT_MAP_POINT: MapPoint = { lat: 25.2854, lng: 51.5310 };
+
+function openStreetMapUrl(point: MapPoint) {
+  return `https://www.openstreetmap.org/?mlat=${point.lat}&mlon=${point.lng}#map=17/${point.lat}/${point.lng}`;
+}
+
+function miniMapUrl(point: MapPoint) {
+  const offset = 0.006;
+  const bbox = [point.lng - offset, point.lat - offset, point.lng + offset, point.lat + offset].join(",");
+  return `https://www.openstreetmap.org/export/embed.html?bbox=${bbox}&layer=mapnik&marker=${point.lat},${point.lng}`;
+}
 
 function usernameToEmail(username: string) {
   // لا نغير دومين الإيميل الداخلي للحسابات القديمة؛ Supabase auth مبني عليه.
@@ -88,6 +102,93 @@ function ToastBanner({ toast }: { toast: Toast }) {
   return <div className={`fixed left-5 top-5 z-50 max-w-sm rounded-2xl border px-5 py-4 text-sm shadow-2xl backdrop-blur ${toneClass}`}>{toast.message}</div>;
 }
 
+function MapPickerModal({ initialPoint, onCancel, onPick }: { initialPoint: MapPoint | null; onCancel: () => void; onPick: (point: MapPoint) => void }) {
+  const mapNode = useRef<HTMLDivElement | null>(null);
+  const mapRef = useRef<unknown>(null);
+  const markerRef = useRef<unknown>(null);
+  const [draft, setDraft] = useState<MapPoint>(initialPoint ?? DEFAULT_MAP_POINT);
+
+  useEffect(() => {
+    let mounted = true;
+    let cleanup: (() => void) | null = null;
+
+    async function initMap() {
+      if (!mapNode.current || mapRef.current) return;
+      const L = await import("leaflet");
+      if (!mounted || !mapNode.current) return;
+      const map = L.map(mapNode.current, { zoomControl: true }).setView([draft.lat, draft.lng], 14);
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        attribution: "© OpenStreetMap contributors",
+        maxZoom: 19,
+      }).addTo(map);
+      const marker = L.marker([draft.lat, draft.lng], {
+        draggable: true,
+        icon: L.divIcon({ className: "", html: '<div style="font-size:30px;line-height:30px;filter:drop-shadow(0 3px 4px rgba(0,0,0,.45))">📍</div>', iconSize: [30, 30], iconAnchor: [15, 30] }),
+      }).addTo(map);
+
+      const updatePoint = (lat: number, lng: number) => {
+        const point = { lat: Number(lat.toFixed(6)), lng: Number(lng.toFixed(6)) };
+        setDraft(point);
+        marker.setLatLng([point.lat, point.lng]);
+      };
+
+      marker.on("dragend", () => {
+        const position = marker.getLatLng();
+        updatePoint(position.lat, position.lng);
+      });
+      map.on("click", (event: { latlng: { lat: number; lng: number } }) => updatePoint(event.latlng.lat, event.latlng.lng));
+      mapRef.current = map;
+      markerRef.current = marker;
+      cleanup = () => map.remove();
+      setTimeout(() => map.invalidateSize(), 100);
+    }
+
+    void initMap();
+    return () => {
+      mounted = false;
+      cleanup?.();
+      mapRef.current = null;
+      markerRef.current = null;
+    };
+  // Initialize Leaflet once for this modal.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function useCurrentLocation() {
+    if (!navigator.geolocation) return;
+    navigator.geolocation.getCurrentPosition((position) => {
+      const point = { lat: Number(position.coords.latitude.toFixed(6)), lng: Number(position.coords.longitude.toFixed(6)) };
+      setDraft(point);
+      const map = mapRef.current as { setView: (coords: [number, number], zoom: number) => void } | null;
+      const marker = markerRef.current as { setLatLng: (coords: [number, number]) => void } | null;
+      map?.setView([point.lat, point.lng], 16);
+      marker?.setLatLng([point.lat, point.lng]);
+    });
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/70 p-4 backdrop-blur" dir="rtl">
+      <div className="w-full max-w-3xl rounded-[2rem] border border-white/10 bg-slate-950 p-4 shadow-2xl sm:p-5">
+        <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h3 className="text-2xl font-black text-white">حدد المكان على الخريطة</h3>
+            <p className="text-sm text-white/55">اضغط على الخريطة أو اسحب العلامة للمكان المطلوب.</p>
+          </div>
+          <button className={buttonClass("ghost")} type="button" onClick={useCurrentLocation}>موقعي الحالي</button>
+        </div>
+        <div ref={mapNode} className="h-[420px] overflow-hidden rounded-3xl border border-white/10 bg-slate-900" />
+        <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <p className="font-mono text-xs text-white/55" dir="ltr">{draft.lat}, {draft.lng}</p>
+          <div className="flex gap-2">
+            <button className={buttonClass("ghost")} type="button" onClick={onCancel}>إلغاء</button>
+            <button className={buttonClass("primary")} type="button" onClick={() => onPick(draft)}>اختيار المكان</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function Home() {
   const supabase = useMemo(() => createClient(), []);
   const configured = hasSupabaseConfig();
@@ -121,6 +222,8 @@ export default function Home() {
   const [newGroupDate, setNewGroupDate] = useState("");
   const [newGroupTime, setNewGroupTime] = useState("");
   const [newGroupLocation, setNewGroupLocation] = useState("");
+  const [newGroupLocationPoint, setNewGroupLocationPoint] = useState<MapPoint | null>(null);
+  const [mapPickerOpen, setMapPickerOpen] = useState(false);
   const [newGroupLocationUrl, setNewGroupLocationUrl] = useState("");
   const [newGroupVisibility, setNewGroupVisibility] = useState<GroupVisibility>("private");
   const [allowJoinRequests, setAllowJoinRequests] = useState(true);
@@ -475,7 +578,9 @@ export default function Home() {
         event_date: newGroupDate || null,
         event_time: newGroupTime || null,
         location_name: newGroupLocation.trim() || null,
-        location_url: newGroupLocationUrl.trim() || null,
+        location_url: newGroupLocationPoint ? openStreetMapUrl(newGroupLocationPoint) : newGroupLocationUrl.trim() || null,
+        location_lat: newGroupLocationPoint?.lat ?? null,
+        location_lng: newGroupLocationPoint?.lng ?? null,
         visibility: newGroupVisibility,
         allow_join_requests: newGroupVisibility === "public" ? allowJoinRequests : false,
         total_amount: newGroupType === "qutiyyah" ? totalAmount : null,
@@ -504,6 +609,7 @@ export default function Home() {
       setNewGroupDate("");
       setNewGroupTime("");
       setNewGroupLocation("");
+      setNewGroupLocationPoint(null);
       setNewGroupLocationUrl("");
       setNewTotalAmount("");
       setSelectedGroupFriendIds([]);
@@ -741,6 +847,21 @@ export default function Home() {
           ) : null}
         </div>
 
+        {group.location_lat !== null && group.location_lng !== null ? (
+          <div className="mb-5 overflow-hidden rounded-3xl border border-white/10 bg-slate-950/60">
+            <iframe
+              className="h-56 w-full border-0"
+              title={`خريطة ${group.name}`}
+              src={miniMapUrl({ lat: group.location_lat, lng: group.location_lng })}
+              loading="lazy"
+            />
+            <div className="flex items-center justify-between gap-3 px-4 py-3 text-sm">
+              <span className="font-bold text-white/80">{group.location_name || "موقع القروب"}</span>
+              <a className="text-emerald-200 underline" href={openStreetMapUrl({ lat: group.location_lat, lng: group.location_lng })} target="_blank" rel="noreferrer">فتح الخريطة</a>
+            </div>
+          </div>
+        ) : null}
+
         {group.group_type === "qutiyyah" ? (
           <div className="mb-5 grid gap-3 sm:grid-cols-3">
             <div className="rounded-2xl bg-black/20 p-4"><p className="text-xs text-white/50">الإجمالي المطلوب</p><p className="text-2xl font-black text-amber-200">{formatMoney(totals.due || group.total_amount)}</p></div>
@@ -851,6 +972,18 @@ export default function Home() {
         </header>
 
         <ToastBanner toast={toast} />
+        {mapPickerOpen ? (
+          <MapPickerModal
+            initialPoint={newGroupLocationPoint}
+            onCancel={() => setMapPickerOpen(false)}
+            onPick={(point) => {
+              setNewGroupLocationPoint(point);
+              setNewGroupLocationUrl(openStreetMapUrl(point));
+              setMapPickerOpen(false);
+              notify("تم تحديد المكان على الخريطة.");
+            }}
+          />
+        ) : null}
 
         {publicGroupOnly ? (
           <section className="flex-1 py-8">
@@ -953,7 +1086,7 @@ export default function Home() {
           <div className={cardClass()}><h3 className="mb-2 text-xl font-black">الحساب</h3><p className="text-sm text-white/60">داخل باسم</p><h4 className="text-2xl font-black">{profile?.display_name || profile?.username}</h4><p className="text-sm text-emerald-300">@{profile?.username}</p></div>
           <div className={cardClass()}><h3 className="mb-2 text-xl font-black">الأصدقاء والإضافة</h3><p className="mb-4 text-sm text-white/55">كودك وإضافة صديق جديد.</p><div className="rounded-3xl border border-emerald-300/20 bg-emerald-300/10 p-4"><p className="text-xs text-white/60">كود الإضافة الخاص فيك</p><button className="mt-2 w-full rounded-xl bg-slate-950/70 px-4 py-3 font-mono text-2xl font-black tracking-[0.35em] text-emerald-200" onClick={async () => { if (profile?.invite_code) { await navigator.clipboard?.writeText(profile.invite_code); notify("تم نسخ كود الإضافة."); } }} type="button">{profile?.invite_code || "--------"}</button></div><form className="mt-4 rounded-2xl border border-white/10 bg-black/15 p-4" onSubmit={addFriend}><input className="mb-3 w-full rounded-2xl border border-white/10 bg-slate-950/70 px-4 py-3 font-mono text-lg tracking-[0.25em] text-white outline-none" value={friendCode} onChange={(event) => setFriendCode(event.target.value.toUpperCase())} placeholder="كود الصديق" maxLength={8} dir="ltr" /><input className="mb-3 w-full rounded-2xl border border-white/10 bg-slate-950/70 px-4 py-3 text-white outline-none" value={friendLabel} onChange={(event) => setFriendLabel(event.target.value)} placeholder="الاسم عندك" maxLength={40} /><button className={`${buttonClass()} w-full`} disabled={busy}>إرسال طلب</button></form>{outgoingRequests.length > 0 ? <div className="mt-4 rounded-2xl bg-black/15 p-4"><h4 className="mb-2 font-black">طلبات مرسلة</h4>{outgoingRequests.map((request) => <p key={request.id} className="text-sm text-white/70">بانتظار @{request.addressee?.username}</p>)}</div> : null}</div>
         </div>
-        <div className={cardClass()}><h3 className="mb-2 text-xl font-black">إنشاء قروب</h3><p className="mb-4 text-sm text-white/55">قروب ترتيب أو قطيّة مع رابط مشاركة.</p><form className="space-y-3" onSubmit={createGroup}><div className="grid grid-cols-2 gap-2"><button className={buttonClass(newGroupType === "arrangement" ? "primary" : "ghost")} onClick={() => setNewGroupType("arrangement")} type="button">ترتيب</button><button className={buttonClass(newGroupType === "qutiyyah" ? "primary" : "ghost")} onClick={() => setNewGroupType("qutiyyah")} type="button">قطيّة</button></div><input className="w-full rounded-2xl border border-white/10 bg-slate-950/70 px-4 py-3 text-white outline-none" value={newGroupName} onChange={(event) => setNewGroupName(event.target.value)} placeholder="اسم القروب" maxLength={80} /><textarea className="min-h-24 w-full rounded-2xl border border-white/10 bg-slate-950/70 px-4 py-3 text-white outline-none" value={newGroupDescription} onChange={(event) => setNewGroupDescription(event.target.value)} placeholder="تفاصيل القروب" /><div className="grid grid-cols-2 gap-2"><input className="rounded-2xl border border-white/10 bg-slate-950/70 px-4 py-3 text-white outline-none" type="date" value={newGroupDate} onChange={(event) => setNewGroupDate(event.target.value)} /><input className="rounded-2xl border border-white/10 bg-slate-950/70 px-4 py-3 text-white outline-none" type="time" value={newGroupTime} onChange={(event) => setNewGroupTime(event.target.value)} /></div><input className="w-full rounded-2xl border border-white/10 bg-slate-950/70 px-4 py-3 text-white outline-none" value={newGroupLocation} onChange={(event) => setNewGroupLocation(event.target.value)} placeholder="المكان اختياري" /><input className="w-full rounded-2xl border border-white/10 bg-slate-950/70 px-4 py-3 text-white outline-none" value={newGroupLocationUrl} onChange={(event) => setNewGroupLocationUrl(event.target.value)} placeholder="رابط الموقع اختياري" dir="ltr" /><div className="grid grid-cols-2 gap-2"><button className={buttonClass(newGroupVisibility === "private" ? "primary" : "ghost")} onClick={() => setNewGroupVisibility("private")} type="button">خاص</button><button className={buttonClass(newGroupVisibility === "public" ? "primary" : "ghost")} onClick={() => setNewGroupVisibility("public")} type="button">عام</button></div>{newGroupVisibility === "public" ? <label className="flex items-center justify-between rounded-2xl bg-black/20 p-4"><span className="font-bold">السماح بطلبات الانضمام</span><input className="h-5 w-5 accent-emerald-300" type="checkbox" checked={allowJoinRequests} onChange={(event) => setAllowJoinRequests(event.target.checked)} /></label> : null}{newGroupType === "qutiyyah" ? <div className="rounded-2xl border border-amber-300/20 bg-amber-300/10 p-4"><input className="mb-3 w-full rounded-2xl border border-white/10 bg-slate-950/70 px-4 py-3 text-white outline-none" value={newTotalAmount} onChange={(event) => setNewTotalAmount(event.target.value)} placeholder="المبلغ الإجمالي اختياري" inputMode="decimal" /><label className="flex items-center justify-between"><span className="font-bold">تقسيم تلقائي على الأعضاء</span><input className="h-5 w-5 accent-amber-300" type="checkbox" checked={autoSplitAmount} onChange={(event) => setAutoSplitAmount(event.target.checked)} /></label></div> : null}<div className="max-h-56 space-y-2 overflow-auto rounded-2xl border border-white/10 bg-black/15 p-3">{friends.length === 0 ? <p className="text-sm text-white/50">أضف أصدقاء أولاً لو تبي تدعوهم.</p> : friends.map((friend) => <label key={friend.friendshipId} className={`flex cursor-pointer items-center justify-between gap-3 rounded-2xl border p-3 ${selectedGroupFriendIds.includes(friend.user.id) ? "border-emerald-300/60 bg-emerald-300/15" : "border-white/10 bg-black/20"}`}><span><b className="block">{friend.label}</b><span className="text-xs text-emerald-300">@{friend.user.username}</span></span><input className="h-5 w-5 accent-emerald-300" type="checkbox" checked={selectedGroupFriendIds.includes(friend.user.id)} onChange={() => toggleGroupFriend(friend.user.id)} /></label>)}</div><button className={`${buttonClass()} w-full`} disabled={busy}>إنشاء القروب</button></form></div>
+        <div className={cardClass()}><h3 className="mb-2 text-xl font-black">إنشاء قروب</h3><p className="mb-4 text-sm text-white/55">قروب ترتيب أو قطيّة مع رابط مشاركة.</p><form className="space-y-3" onSubmit={createGroup}><div className="grid grid-cols-2 gap-2"><button className={buttonClass(newGroupType === "arrangement" ? "primary" : "ghost")} onClick={() => setNewGroupType("arrangement")} type="button">ترتيب</button><button className={buttonClass(newGroupType === "qutiyyah" ? "primary" : "ghost")} onClick={() => setNewGroupType("qutiyyah")} type="button">قطيّة</button></div><input className="w-full rounded-2xl border border-white/10 bg-slate-950/70 px-4 py-3 text-white outline-none" value={newGroupName} onChange={(event) => setNewGroupName(event.target.value)} placeholder="اسم القروب" maxLength={80} /><textarea className="min-h-24 w-full rounded-2xl border border-white/10 bg-slate-950/70 px-4 py-3 text-white outline-none" value={newGroupDescription} onChange={(event) => setNewGroupDescription(event.target.value)} placeholder="تفاصيل القروب" /><div className="grid grid-cols-2 gap-2"><input className="rounded-2xl border border-white/10 bg-slate-950/70 px-4 py-3 text-white outline-none" type="date" value={newGroupDate} onChange={(event) => setNewGroupDate(event.target.value)} /><input className="rounded-2xl border border-white/10 bg-slate-950/70 px-4 py-3 text-white outline-none" type="time" value={newGroupTime} onChange={(event) => setNewGroupTime(event.target.value)} /></div><input className="w-full rounded-2xl border border-white/10 bg-slate-950/70 px-4 py-3 text-white outline-none" value={newGroupLocation} onChange={(event) => setNewGroupLocation(event.target.value)} placeholder="اسم المكان اختياري" /><div className="overflow-hidden rounded-2xl border border-white/10 bg-black/15"><button className={`${buttonClass("sky")} w-full rounded-none`} onClick={() => setMapPickerOpen(true)} type="button">{newGroupLocationPoint ? "تغيير المكان في الخريطة" : "تحديد المكان في الخريطة"}</button>{newGroupLocationPoint ? <><iframe className="h-44 w-full border-0" title="معاينة موقع القروب" src={miniMapUrl(newGroupLocationPoint)} loading="lazy" /><div className="flex items-center justify-between gap-2 px-3 py-2 text-xs text-white/60"><span dir="ltr">{newGroupLocationPoint.lat}, {newGroupLocationPoint.lng}</span><button className="font-bold text-rose-200 underline" onClick={() => { setNewGroupLocationPoint(null); setNewGroupLocationUrl(""); }} type="button">مسح الموقع</button></div></> : <p className="px-4 py-3 text-sm text-white/50">اختياري: اختر نقطة على الخريطة عشان تظهر مصغرة داخل القروب.</p>}</div><div className="grid grid-cols-2 gap-2"><button className={buttonClass(newGroupVisibility === "private" ? "primary" : "ghost")} onClick={() => setNewGroupVisibility("private")} type="button">خاص</button><button className={buttonClass(newGroupVisibility === "public" ? "primary" : "ghost")} onClick={() => setNewGroupVisibility("public")} type="button">عام</button></div>{newGroupVisibility === "public" ? <label className="flex items-center justify-between rounded-2xl bg-black/20 p-4"><span className="font-bold">السماح بطلبات الانضمام</span><input className="h-5 w-5 accent-emerald-300" type="checkbox" checked={allowJoinRequests} onChange={(event) => setAllowJoinRequests(event.target.checked)} /></label> : null}{newGroupType === "qutiyyah" ? <div className="rounded-2xl border border-amber-300/20 bg-amber-300/10 p-4"><input className="mb-3 w-full rounded-2xl border border-white/10 bg-slate-950/70 px-4 py-3 text-white outline-none" value={newTotalAmount} onChange={(event) => setNewTotalAmount(event.target.value)} placeholder="المبلغ الإجمالي اختياري" inputMode="decimal" /><label className="flex items-center justify-between"><span className="font-bold">تقسيم تلقائي على الأعضاء</span><input className="h-5 w-5 accent-amber-300" type="checkbox" checked={autoSplitAmount} onChange={(event) => setAutoSplitAmount(event.target.checked)} /></label></div> : null}<div className="max-h-56 space-y-2 overflow-auto rounded-2xl border border-white/10 bg-black/15 p-3">{friends.length === 0 ? <p className="text-sm text-white/50">أضف أصدقاء أولاً لو تبي تدعوهم.</p> : friends.map((friend) => <label key={friend.friendshipId} className={`flex cursor-pointer items-center justify-between gap-3 rounded-2xl border p-3 ${selectedGroupFriendIds.includes(friend.user.id) ? "border-emerald-300/60 bg-emerald-300/15" : "border-white/10 bg-black/20"}`}><span><b className="block">{friend.label}</b><span className="text-xs text-emerald-300">@{friend.user.username}</span></span><input className="h-5 w-5 accent-emerald-300" type="checkbox" checked={selectedGroupFriendIds.includes(friend.user.id)} onChange={() => toggleGroupFriend(friend.user.id)} /></label>)}</div><button className={`${buttonClass()} w-full`} disabled={busy}>إنشاء القروب</button></form></div>
       </div></section>
     );
   }

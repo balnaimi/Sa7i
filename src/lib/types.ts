@@ -37,6 +37,8 @@ export type ShaltarteebGroup = {
   event_time: string | null;
   location_name: string | null;
   location_url: string | null;
+  location_lat: number | null;
+  location_lng: number | null;
   visibility: GroupVisibility;
   allow_join_requests: boolean;
   total_amount: number | null;

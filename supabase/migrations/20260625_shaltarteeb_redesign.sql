@@ -16,6 +16,8 @@ alter table public.groups
   add column if not exists event_time time,
   add column if not exists location_name text,
   add column if not exists location_url text,
+  add column if not exists location_lat double precision,
+  add column if not exists location_lng double precision,
   add column if not exists visibility text not null default 'private',
   add column if not exists allow_join_requests boolean not null default false,
   add column if not exists total_amount numeric(12,2),
