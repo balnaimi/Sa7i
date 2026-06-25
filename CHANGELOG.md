@@ -4,6 +4,14 @@ All notable changes to شالترتيب!؟ are documented here.
 
 شالترتيب!؟ follows semantic versioning: `MAJOR.MINOR.PATCH`.
 
+## [0.6.1] - 2026-06-25
+
+### Added
+- Group admins can delete an entire group from the group detail header.
+
+### Security
+- Added a Supabase RLS delete policy so only the group creator can delete their group.
+
 ## [0.6.0] - 2026-06-25
 
 ### Changed

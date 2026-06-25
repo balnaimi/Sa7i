@@ -127,6 +127,7 @@ drop policy if exists "members can update own group response" on public.group_me
 drop policy if exists "members can leave or creator can remove members" on public.group_members;
 drop policy if exists "public or members can read groups" on public.groups;
 drop policy if exists "creators can update groups" on public.groups;
+drop policy if exists "creators can delete groups" on public.groups;
 drop policy if exists "public or members can read group members" on public.group_members;
 drop policy if exists "creators can add group members" on public.group_members;
 drop policy if exists "members admins and money managers can update group members" on public.group_members;
@@ -155,6 +156,11 @@ on public.groups for update
 to authenticated
 using (auth.uid() = created_by)
 with check (auth.uid() = created_by);
+
+create policy "creators can delete groups"
+on public.groups for delete
+to authenticated
+using (auth.uid() = created_by);
 
 create policy "public or members can read group members"
 on public.group_members for select

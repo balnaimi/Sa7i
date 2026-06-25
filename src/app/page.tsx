@@ -617,7 +617,7 @@ export default function Home() {
   async function removeGroupMember(group: GroupRow, member: GroupMemberWithProfile) {
     if (!profile) return;
     const isSelf = member.profile_id === profile.id;
-    if (group.created_by === profile.id && isSelf) return notify("منشئ القروب ما يطلع نفسه حالياً.", "warn");
+    if (group.created_by === profile.id && isSelf) return notify("منشئ القروب ما يطلع نفسه حالياً. إذا تبي تشيل القروب كامل استخدم حذف القروب.", "warn");
     if (!window.confirm(isSelf ? `الخروج من ${group.name}؟` : `إزالة ${memberName(member, group)} من ${group.name}؟`)) return;
     setBusy(true);
     try {
@@ -628,6 +628,24 @@ export default function Home() {
       notify(isSelf ? "طلعت من القروب." : "تمت إزالة العضو.", "warn");
     } catch (error) {
       notify(error instanceof Error ? error.message : "تعذر تحديث العضوية.", "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function deleteGroup(group: GroupRow) {
+    if (!profile || group.created_by !== profile.id) return;
+    const confirmed = window.confirm(`حذف القروب "${group.name}" بالكامل؟ هذا بيحذف الأعضاء والطلبات وكل بيانات القروب.`);
+    if (!confirmed) return;
+    setBusy(true);
+    try {
+      const { error } = await supabase.from("groups").delete().eq("id", group.id).eq("created_by", profile.id);
+      if (error) throw error;
+      const loaded = await loadGroups(profile.id);
+      setSelectedGroup(loaded.find((row) => acceptedMember(row, profile.id)) ?? null);
+      notify("تم حذف القروب.", "warn");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "تعذر حذف القروب.", "error");
     } finally {
       setBusy(false);
     }
@@ -701,7 +719,12 @@ export default function Home() {
               {group.location_url ? <a className="rounded-full bg-black/20 px-3 py-1 text-sky-200 underline" href={group.location_url} target="_blank" rel="noreferrer">رابط الموقع</a> : null}
             </div>
           </div>
-          {!publicReadOnly ? <button className={buttonClass("ghost")} onClick={() => copyShareLink(group)} type="button">نسخ رابط المشاركة</button> : null}
+          {!publicReadOnly ? (
+            <div className="flex flex-wrap gap-2 sm:justify-end">
+              <button className={buttonClass("ghost")} onClick={() => copyShareLink(group)} type="button">نسخ رابط المشاركة</button>
+              {isCreator ? <button className={buttonClass("danger")} onClick={() => deleteGroup(group)} disabled={busy} type="button">حذف القروب</button> : null}
+            </div>
+          ) : null}
         </div>
 
         {group.group_type === "qutiyyah" ? (
