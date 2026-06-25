@@ -4,6 +4,12 @@ All notable changes to شالترتيب!؟ are documented here.
 
 شالترتيب!؟ follows semantic versioning: `MAJOR.MINOR.PATCH`.
 
+## [0.6.2] - 2026-06-25
+
+### Fixed
+- Restored the original internal auth email domain (`@sa7i.local`) so existing accounts can log in after the app rename.
+- Added a fallback login attempt for accounts briefly created with the new internal `@shaltarteeb.local` domain.
+
 ## [0.6.1] - 2026-06-25
 
 ### Added

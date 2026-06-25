@@ -40,6 +40,11 @@ type GroupRow = ShaltarteebGroup & {
 };
 
 function usernameToEmail(username: string) {
+  // لا نغير دومين الإيميل الداخلي للحسابات القديمة؛ Supabase auth مبني عليه.
+  return `${username.toLowerCase()}@sa7i.local`;
+}
+
+function fallbackUsernameToEmail(username: string) {
   return `${username.toLowerCase()}@shaltarteeb.local`;
 }
 
@@ -321,7 +326,16 @@ export default function Home() {
         if (!data.user) throw new Error("لم يتم إنشاء المستخدم.");
         await ensureProfile(data.user.id, normalized, displayName);
       } else {
-        const { data, error } = await supabase.auth.signInWithPassword({ email: usernameToEmail(normalized), password });
+        let data;
+        let error;
+        const primary = await supabase.auth.signInWithPassword({ email: usernameToEmail(normalized), password });
+        data = primary.data;
+        error = primary.error;
+        if (error) {
+          const fallback = await supabase.auth.signInWithPassword({ email: fallbackUsernameToEmail(normalized), password });
+          data = fallback.data;
+          error = fallback.error;
+        }
         if (error) throw error;
         if (!data.user) throw new Error("تعذر تسجيل الدخول.");
         await loadEverything(data.user.id);

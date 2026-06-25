@@ -1,7 +1,8 @@
 -- شالترتيب!? Supabase schema
 -- شغّل الملف في Supabase Dashboard → SQL Editor → New query → Run.
 -- ملاحظة للتجربة: عطّل Email confirmations من Authentication → Sign In / Providers → Email
--- لأن التطبيق يستخدم username وكلمة مرور ويحوّل الاسم داخلياً إلى بريد مثل username@shaltarteeb.local.
+-- لأن التطبيق يستخدم username وكلمة مرور ويحوّل الاسم داخلياً إلى بريد مثل username@sa7i.local.
+-- احتفظنا بالدومين الداخلي القديم بعد تغيير اسم التطبيق حتى تظل الحسابات القديمة تعمل.
 
 create extension if not exists pgcrypto;
 create schema if not exists private;
