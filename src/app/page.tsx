@@ -335,6 +335,8 @@ export default function Home() {
   const groupInvitations = groups.filter((group) =>
     group.members.some((member) => member.profile_id === profile?.id && member.membership_status === "invited")
   );
+  const invitationCount = incomingRequests.length + groupInvitations.length;
+  const notificationCount = pendingSignalCount + invitationCount;
 
   async function syncPushPreferences(next?: Partial<{ quietEnabled: boolean; quietStart: string; quietEnd: string; mutedFriendIds: string[] }>) {
     if (!profile || !("serviceWorker" in navigator)) return;
@@ -859,7 +861,14 @@ export default function Home() {
           table: "friendships",
           filter: `addressee_id=eq.${profile.id}`,
         },
-        () => loadEverything(profile.id)
+        async (payload) => {
+          await loadEverything(profile.id);
+          const request = payload.new as Partial<Friendship>;
+          if (payload.eventType === "INSERT" && request.status === "pending") {
+            notify("وصلتك دعوة صداقة جديدة في التنبيهات.", "warn");
+            await showBrowserNotification("دعوة صداقة", "وصلتك دعوة صداقة جديدة");
+          }
+        }
       )
       .subscribe();
 
@@ -883,7 +892,14 @@ export default function Home() {
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "group_members" },
-        () => loadGroups(profile.id)
+        async (payload) => {
+          await loadGroups(profile.id);
+          const member = payload.new as Partial<GroupMember>;
+          if (payload.eventType === "INSERT" && member.profile_id === profile.id && member.membership_status === "invited") {
+            notify("وصلتك دعوة قروب جديدة في التنبيهات.", "warn");
+            await showBrowserNotification("دعوة قروب", "وصلتك دعوة قروب جديدة");
+          }
+        }
       )
       .subscribe();
 
@@ -1559,10 +1575,10 @@ export default function Home() {
                 الرئيسية
               </button>
               <button className={buttonClass(view === "missed" ? "primary" : "ghost")} onClick={() => setView("missed")}>
-                التنبيهات {pendingSignalCount > 0 ? `(${pendingSignalCount})` : ""}
+                التنبيهات {notificationCount > 0 ? `(${notificationCount})` : ""}
               </button>
               <button className={buttonClass(view === "settings" ? "primary" : "ghost")} onClick={() => setView("settings")}>
-                الإعدادات {incomingRequests.length + groupInvitations.length > 0 ? `(${incomingRequests.length + groupInvitations.length})` : ""}
+                الإعدادات
               </button>
               <button className={buttonClass("ghost")} onClick={signOut}>
                 خروج
@@ -1643,54 +1659,24 @@ export default function Home() {
 
         {view === "home" ? (
           <section className="flex flex-1 items-center py-8">
-            <div className="w-full">
-              <div className="mb-8 rounded-[2rem] border border-white/10 bg-white/10 p-6 text-center shadow-2xl backdrop-blur sm:p-8">
-                <p className="text-sm font-semibold text-emerald-300">لوحة سريعة</p>
-                <h2 className="mt-2 text-3xl font-black sm:text-5xl">وش تبي تفتح؟</h2>
-                <p className="mx-auto mt-3 max-w-2xl text-sm leading-7 text-white/60">
-                  خلّينا الرئيسية بسيطة: الأصدقاء في خانة، والقروبات في خانة. كل الإضافات والدعوات والإعدادات تلقاها في الإعدادات.
-                </p>
-              </div>
+            <div className="grid w-full gap-5 md:grid-cols-2">
+              <button
+                className="group min-h-[220px] rounded-[2rem] border border-white/10 bg-slate-950/65 p-8 text-center shadow-2xl transition hover:-translate-y-1 hover:border-emerald-300/50 hover:bg-slate-900"
+                onClick={() => setView("friends")}
+                type="button"
+              >
+                <span className="mx-auto grid h-20 w-20 place-items-center rounded-3xl bg-emerald-300 text-4xl text-slate-950 shadow-lg shadow-emerald-300/25">👥</span>
+                <h2 className="mt-6 text-4xl font-black">الأصدقاء</h2>
+              </button>
 
-              <div className="grid gap-5 md:grid-cols-2">
-                <button
-                  className="group overflow-hidden rounded-[2rem] border border-white/10 bg-slate-950/65 p-6 text-right shadow-2xl transition hover:-translate-y-1 hover:border-emerald-300/50 hover:bg-slate-900"
-                  onClick={() => setView("friends")}
-                  type="button"
-                >
-                  <div className="flex items-start justify-between gap-4">
-                    <span className="grid h-14 w-14 place-items-center rounded-2xl bg-emerald-300 text-3xl text-slate-950 shadow-lg shadow-emerald-300/25">👥</span>
-                    <span className="rounded-full bg-white/10 px-3 py-1 text-xs font-black text-white/70">{friends.length} أصدقاء</span>
-                  </div>
-                  <h3 className="mt-8 text-3xl font-black">الأصدقاء</h3>
-                  <p className="mt-3 text-sm leading-7 text-white/55">
-                    افتح قائمة أصدقائك، اختار شخص، أرسل صاحي، أو عدّل الاسم والكتم والحذف من نفس المكان.
-                  </p>
-                  <span className="mt-6 inline-flex rounded-2xl bg-white/10 px-4 py-2 text-sm font-black text-white transition group-hover:bg-emerald-300 group-hover:text-slate-950">
-                    دخول الأصدقاء
-                  </span>
-                </button>
-
-                <button
-                  className="group overflow-hidden rounded-[2rem] border border-white/10 bg-slate-950/65 p-6 text-right shadow-2xl transition hover:-translate-y-1 hover:border-sky-300/50 hover:bg-slate-900"
-                  onClick={() => setView("groups")}
-                  type="button"
-                >
-                  <div className="flex items-start justify-between gap-4">
-                    <span className="grid h-14 w-14 place-items-center rounded-2xl bg-sky-300 text-3xl text-slate-950 shadow-lg shadow-sky-300/25">▦</span>
-                    <span className="rounded-full bg-white/10 px-3 py-1 text-xs font-black text-white/70">
-                      {acceptedGroups.length} قروبات · {groupInvitations.length} دعوات
-                    </span>
-                  </div>
-                  <h3 className="mt-8 text-3xl font-black">القروبات</h3>
-                  <p className="mt-3 text-sm leading-7 text-white/55">
-                    شوف القروبات اللي أنت داخلها، اختر صح أو لا أو بدون قرار، وتعرف من الأدمن بعلامة التاج.
-                  </p>
-                  <span className="mt-6 inline-flex rounded-2xl bg-white/10 px-4 py-2 text-sm font-black text-white transition group-hover:bg-sky-300 group-hover:text-slate-950">
-                    دخول القروبات
-                  </span>
-                </button>
-              </div>
+              <button
+                className="group min-h-[220px] rounded-[2rem] border border-white/10 bg-slate-950/65 p-8 text-center shadow-2xl transition hover:-translate-y-1 hover:border-sky-300/50 hover:bg-slate-900"
+                onClick={() => setView("groups")}
+                type="button"
+              >
+                <span className="mx-auto grid h-20 w-20 place-items-center rounded-3xl bg-sky-300 text-4xl text-slate-950 shadow-lg shadow-sky-300/25">▦</span>
+                <h2 className="mt-6 text-4xl font-black">القروبات</h2>
+              </button>
             </div>
           </section>
         ) : null}
@@ -1981,97 +1967,33 @@ export default function Home() {
 
         {view === "missed" ? (
           <section className="flex-1 py-8">
-            <div className="rounded-[2rem] border border-white/10 bg-white/10 p-5 backdrop-blur sm:p-8">
-              <div className="mb-6 flex items-center justify-between gap-3">
-                <h2 className="text-2xl font-black">تنبيهات فائتة</h2>
-                <div className="flex items-center gap-2">
-                  {missedSignals.length > 0 ? (
-                    <button className={`${buttonClass("ghost")} py-2`} onClick={clearMissedSignals} disabled={busy}>
-                      مسح الكل
-                    </button>
-                  ) : null}
+            <div className="space-y-5">
+              <div className="rounded-[2rem] border border-white/10 bg-white/10 p-5 backdrop-blur sm:p-8">
+                <div className="mb-6 flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold text-amber-300">التنبيهات</p>
+                    <h2 className="text-2xl font-black">الدعوات والتنبيهات الفائتة</h2>
+                  </div>
                   <span className="rounded-full bg-amber-300 px-3 py-1 text-xs font-black text-slate-950">
-                    {missedSignals.length}
+                    {notificationCount}
                   </span>
                 </div>
-              </div>
-              {missedSignals.length === 0 ? (
-                <div className="grid min-h-[320px] place-items-center rounded-[2rem] border border-dashed border-white/15 bg-black/10 p-8 text-center text-white/55">
-                  ما فيه تنبيهات فائتة حالياً.
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {missedSignals.map((signal) => (
-                    <button
-                      key={signal.id}
-                      className="w-full rounded-2xl border border-amber-300/20 bg-amber-300/10 p-4 text-right transition hover:bg-amber-300/15"
-                      onClick={() => openMissedSignal(signal)}
-                    >
-                      <div className="flex items-center justify-between gap-3">
-                        <div>
-                          <p className="font-black">{senderNameForSignal(signal)}</p>
-                          <p className="text-xs text-white/50">{formatSignalDate(signal.created_at)}</p>
-                        </div>
-                        {isEmojiReply(signal.text) ? (
-                          <span className={`grid h-12 w-12 place-items-center rounded-2xl ${replyToneClass(signal.text)}`}>
-                            <ReplyStatusIcon text={signal.text} className="h-7 w-7" />
-                          </span>
-                        ) : (
-                          <span className="text-xl font-black text-emerald-200">{signal.text}</span>
-                        )}
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          </section>
-        ) : null}
 
-        {view === "settings" ? (
-          <section className="flex-1 py-8">
-            <div className="mb-5 rounded-[2rem] border border-white/10 bg-white/10 p-5 backdrop-blur sm:p-6">
-              <p className="text-sm font-semibold text-emerald-300">الإعدادات</p>
-              <h2 className="mt-1 text-3xl font-black">مركز التحكم</h2>
-              <p className="mt-2 text-sm leading-6 text-white/55">
-                قسمنا الإعدادات حسب الموضوع: الأصدقاء، القروبات، التنبيهات، والشكل.
-              </p>
-            </div>
-
-            <div className="grid gap-5 lg:grid-cols-2">
-              <div className="space-y-5">
-                <div className="rounded-[2rem] border border-white/10 bg-white/10 p-5 backdrop-blur">
-                  <h3 className="mb-2 text-xl font-black">الحساب</h3>
-                  <p className="text-sm text-white/60">داخل باسم</p>
-                  <h4 className="text-2xl font-black">{profile?.display_name || profile?.username}</h4>
-                  <p className="text-sm text-emerald-300">@{profile?.username}</p>
-                </div>
-
-                <div className="rounded-[2rem] border border-white/10 bg-white/10 p-5 backdrop-blur">
-                  <h3 className="mb-2 text-xl font-black">الأصدقاء والإضافة</h3>
-                  <p className="mb-4 text-sm leading-6 text-white/55">كودك، إضافة صديق، وطلبات الصداقة كلها هنا.</p>
-                  <InviteCodeCard inviteCode={profile?.invite_code} onCopy={() => void copyInviteCode()} />
-                  <div className="mt-4 rounded-2xl border border-white/10 bg-black/15 p-4">
-                    <h4 className="mb-3 font-black">إضافة شخص بالكود</h4>
-                    <AddFriendForm
-                      friendCode={friendCode}
-                      friendLabel={friendLabel}
-                      busy={busy}
-                      onSubmit={addFriend}
-                      onFriendCodeChange={setFriendCode}
-                      onFriendLabelChange={setFriendLabel}
-                    />
+                {invitationCount === 0 ? (
+                  <div className="rounded-2xl border border-white/10 bg-black/15 p-4 text-sm text-white/55">
+                    ما عندك دعوات صداقة أو قروبات حالياً.
                   </div>
-                  <div className="mt-4 grid gap-3">
-                    <div className="rounded-2xl border border-white/10 bg-black/15 p-4">
-                      <h4 className="mb-3 font-black">طلبات واردة {incomingRequests.length > 0 ? `(${incomingRequests.length})` : ""}</h4>
+                ) : (
+                  <div className="grid gap-4 lg:grid-cols-2">
+                    <div className="rounded-2xl border border-emerald-300/20 bg-emerald-300/10 p-4">
+                      <h3 className="mb-3 font-black text-emerald-100">دعوات الأصدقاء {incomingRequests.length > 0 ? `(${incomingRequests.length})` : ""}</h3>
                       {incomingRequests.length === 0 ? (
-                        <p className="text-sm text-white/50">ما فيه طلبات حالياً.</p>
+                        <p className="text-sm text-white/50">ما فيه دعوات أصدقاء.</p>
                       ) : (
                         <div className="space-y-3">
                           {incomingRequests.map((request) => (
-                            <div key={request.id} className="rounded-2xl bg-black/20 p-3">
-                              <p className="text-xs text-white/50">طلب من</p>
+                            <div key={request.id} className="rounded-2xl bg-black/25 p-3">
+                              <p className="text-xs text-white/50">دعوة من</p>
                               <p className="font-bold">{request.requester?.display_name || request.requester?.username || "مستخدم"}</p>
                               <p className="text-sm text-emerald-300">@{request.requester?.username}</p>
                               <input
@@ -2090,22 +2012,127 @@ export default function Home() {
                         </div>
                       )}
                     </div>
-                    <div className="rounded-2xl border border-white/10 bg-black/15 p-4">
-                      <h4 className="mb-3 font-black">طلبات مرسلة</h4>
-                      {outgoingRequests.length === 0 ? (
-                        <p className="text-sm text-white/50">ما فيه طلبات معلقة.</p>
+
+                    <div className="rounded-2xl border border-sky-300/20 bg-sky-300/10 p-4">
+                      <h3 className="mb-3 font-black text-sky-100">دعوات القروبات {groupInvitations.length > 0 ? `(${groupInvitations.length})` : ""}</h3>
+                      {groupInvitations.length === 0 ? (
+                        <p className="text-sm text-white/50">ما فيه دعوات قروبات.</p>
                       ) : (
-                        <div className="space-y-2 text-sm text-white/70">
-                          {outgoingRequests.map((request) => <p key={request.id}>بانتظار @{request.addressee?.username}</p>)}
+                        <div className="space-y-3">
+                          {groupInvitations.map((group) => (
+                            <div key={group.id} className="rounded-2xl bg-black/25 p-3">
+                              <p className="font-black">{group.name}</p>
+                              <p className="text-xs text-white/50">{group.members.length} أعضاء/مدعوين</p>
+                              <div className="mt-3 grid grid-cols-2 gap-2">
+                                <button className={`${buttonClass("primary")} py-2`} onClick={() => acceptGroupInvite(group)} disabled={busy} type="button">قبول</button>
+                                <button className={`${buttonClass("danger")} py-2`} onClick={() => rejectGroupInvite(group)} disabled={busy} type="button">رفض</button>
+                              </div>
+                            </div>
+                          ))}
                         </div>
                       )}
                     </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="rounded-[2rem] border border-white/10 bg-white/10 p-5 backdrop-blur sm:p-8">
+                <div className="mb-6 flex items-center justify-between gap-3">
+                  <h2 className="text-2xl font-black">تنبيهات فائتة</h2>
+                  <div className="flex items-center gap-2">
+                    {missedSignals.length > 0 ? (
+                      <button className={`${buttonClass("ghost")} py-2`} onClick={clearMissedSignals} disabled={busy}>
+                        مسح الكل
+                      </button>
+                    ) : null}
+                    <span className="rounded-full bg-white/10 px-3 py-1 text-xs font-black text-white/70">
+                      {missedSignals.length}
+                    </span>
+                  </div>
+                </div>
+                {missedSignals.length === 0 ? (
+                  <div className="grid min-h-[220px] place-items-center rounded-[2rem] border border-dashed border-white/15 bg-black/10 p-8 text-center text-white/55">
+                    ما فيه تنبيهات فائتة حالياً.
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {missedSignals.map((signal) => (
+                      <button
+                        key={signal.id}
+                        className="w-full rounded-2xl border border-amber-300/20 bg-amber-300/10 p-4 text-right transition hover:bg-amber-300/15"
+                        onClick={() => openMissedSignal(signal)}
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <p className="font-black">{senderNameForSignal(signal)}</p>
+                            <p className="text-xs text-white/50">{formatSignalDate(signal.created_at)}</p>
+                          </div>
+                          {isEmojiReply(signal.text) ? (
+                            <span className={`grid h-12 w-12 place-items-center rounded-2xl ${replyToneClass(signal.text)}`}>
+                              <ReplyStatusIcon text={signal.text} className="h-7 w-7" />
+                            </span>
+                          ) : (
+                            <span className="text-xl font-black text-emerald-200">{signal.text}</span>
+                          )}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </section>
+        ) : null}
+
+        {view === "settings" ? (
+          <section className="flex-1 py-8">
+            <div className="mb-5 rounded-[2rem] border border-white/10 bg-white/10 p-5 backdrop-blur sm:p-6">
+              <p className="text-sm font-semibold text-emerald-300">الإعدادات</p>
+              <h2 className="mt-1 text-3xl font-black">مركز التحكم</h2>
+              <p className="mt-2 text-sm leading-6 text-white/55">
+                هنا الإضافة والإنشاء وإعدادات الجهاز. الدعوات الجديدة صارت في صفحة التنبيهات.
+              </p>
+            </div>
+
+            <div className="grid gap-5 lg:grid-cols-2">
+              <div className="space-y-5">
+                <div className="rounded-[2rem] border border-white/10 bg-white/10 p-5 backdrop-blur">
+                  <h3 className="mb-2 text-xl font-black">الحساب</h3>
+                  <p className="text-sm text-white/60">داخل باسم</p>
+                  <h4 className="text-2xl font-black">{profile?.display_name || profile?.username}</h4>
+                  <p className="text-sm text-emerald-300">@{profile?.username}</p>
+                </div>
+
+                <div className="rounded-[2rem] border border-white/10 bg-white/10 p-5 backdrop-blur">
+                  <h3 className="mb-2 text-xl font-black">الأصدقاء والإضافة</h3>
+                  <p className="mb-4 text-sm leading-6 text-white/55">كودك وإضافة صديق جديد. دعوات الأصدقاء الواردة تلقاها في التنبيهات.</p>
+                  <InviteCodeCard inviteCode={profile?.invite_code} onCopy={() => void copyInviteCode()} />
+                  <div className="mt-4 rounded-2xl border border-white/10 bg-black/15 p-4">
+                    <h4 className="mb-3 font-black">إضافة شخص بالكود</h4>
+                    <AddFriendForm
+                      friendCode={friendCode}
+                      friendLabel={friendLabel}
+                      busy={busy}
+                      onSubmit={addFriend}
+                      onFriendCodeChange={setFriendCode}
+                      onFriendLabelChange={setFriendLabel}
+                    />
+                  </div>
+                  <div className="mt-4 rounded-2xl border border-white/10 bg-black/15 p-4">
+                    <h4 className="mb-3 font-black">طلبات مرسلة</h4>
+                    {outgoingRequests.length === 0 ? (
+                      <p className="text-sm text-white/50">ما فيه طلبات معلقة.</p>
+                    ) : (
+                      <div className="space-y-2 text-sm text-white/70">
+                        {outgoingRequests.map((request) => <p key={request.id}>بانتظار @{request.addressee?.username}</p>)}
+                      </div>
+                    )}
                   </div>
                 </div>
 
                 <div className="rounded-[2rem] border border-white/10 bg-white/10 p-5 backdrop-blur">
                   <h3 className="mb-2 text-xl font-black">القروبات</h3>
-                  <p className="mb-4 text-sm leading-6 text-white/55">إنشاء قروب جديد وقبول/رفض دعوات القروبات.</p>
+                  <p className="mb-4 text-sm leading-6 text-white/55">إنشاء قروب جديد. دعوات القروبات الواردة تلقاها في التنبيهات.</p>
                   <form className="rounded-2xl border border-white/10 bg-black/15 p-4" onSubmit={createGroup}>
                     <h4 className="mb-3 font-black">إنشاء قروب</h4>
                     <label className="block">
@@ -2125,25 +2152,6 @@ export default function Home() {
                     </div>
                     <button className={`${buttonClass()} mt-4 w-full`} disabled={busy || friends.length === 0}>إنشاء وإرسال الدعوات</button>
                   </form>
-                  <div className="mt-4 rounded-2xl border border-white/10 bg-black/15 p-4">
-                    <h4 className="mb-3 font-black">دعوات القروبات {groupInvitations.length > 0 ? `(${groupInvitations.length})` : ""}</h4>
-                    {groupInvitations.length === 0 ? (
-                      <p className="text-sm text-white/50">ما عندك دعوات قروبات حالياً.</p>
-                    ) : (
-                      <div className="space-y-3">
-                        {groupInvitations.map((group) => (
-                          <div key={group.id} className="rounded-2xl bg-black/20 p-3">
-                            <p className="font-black">{group.name}</p>
-                            <p className="text-xs text-white/50">{group.members.length} أعضاء/مدعوين</p>
-                            <div className="mt-3 grid grid-cols-2 gap-2">
-                              <button className={`${buttonClass("primary")} py-2`} onClick={() => acceptGroupInvite(group)} disabled={busy} type="button">قبول</button>
-                              <button className={`${buttonClass("danger")} py-2`} onClick={() => rejectGroupInvite(group)} disabled={busy} type="button">رفض</button>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
                 </div>
               </div>
 

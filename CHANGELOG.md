@@ -4,6 +4,16 @@ All notable changes to Sa7i are documented here.
 
 Sa7i follows semantic versioning: `MAJOR.MINOR.PATCH`.
 
+## [0.5.1] - 2026-06-25
+
+### Changed
+- Moved incoming friend and group invitations into the notifications page so pending invites are visible from the alerts badge.
+- Simplified the authenticated home page to only two launcher cards: `الأصدقاء` and `القروبات`.
+- Kept settings focused on adding friends, creating groups, and device preferences instead of incoming invitations.
+
+### Added
+- In-app and browser notification prompts for newly received friend and group invitations.
+
 ## [0.5.0] - 2026-06-24
 
 ### Changed
