@@ -1,7 +1,7 @@
 {
-  "name": "Sa7i - صاحي",
-  "short_name": "Sa7i",
-  "description": "تنبيه بسيط بين شخصين بزر واحد.",
+  "name": "شالترتيب!؟",
+  "short_name": "شالترتيب",
+  "description": "تنظيم القروبات والمواعيد والقطيّات بدون شات.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

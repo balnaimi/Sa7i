@@ -1,202 +1,78 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { createClient, hasSupabaseConfig } from "@/lib/supabase/client";
-import type { Friendship, GroupMember, GroupResponse, Profile, Sa7iGroup, WakeSignal, WakeSignalText } from "@/lib/types";
+import type {
+  Friendship,
+  GroupJoinRequest,
+  GroupMember,
+  GroupResponse,
+  GroupType,
+  GroupVisibility,
+  Profile,
+  ShaltarteebGroup,
+} from "@/lib/types";
 
 const USERNAME_RE = /^[a-zA-Z0-9_]{3,24}$/;
 
-type View = "auth" | "home" | "friends" | "groups" | "settings" | "missed";
+type View = "auth" | "home" | "friends" | "groups" | "notifications" | "settings";
 type ToastTone = "ok" | "warn" | "error";
 type Toast = { tone: ToastTone; message: string } | null;
-type WakeSoundId = "classic" | "soft" | "urgent" | "chime";
-type ThemeId = "emerald" | "blue" | "purple" | "orange";
-const EMOJI_REPLIES: WakeSignalText[] = ["✅", "❌"];
-const WAKE_SOUND_STORAGE_KEY = "sa7i:wake-sound";
-const QUIET_ENABLED_STORAGE_KEY = "sa7i:quiet-enabled";
-const QUIET_START_STORAGE_KEY = "sa7i:quiet-start";
-const QUIET_END_STORAGE_KEY = "sa7i:quiet-end";
-const MUTED_FRIENDS_STORAGE_KEY = "sa7i:muted-friends";
-const THEME_STORAGE_KEY = "sa7i:theme";
-const PUBLIC_VAPID_KEY = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
-const WAKE_SOUND_OPTIONS: { id: WakeSoundId; label: string; description: string }[] = [
-  { id: "classic", label: "التنبيه الأساسي", description: "ثلاث نغمات واضحة مثل الحالي." },
-  { id: "soft", label: "هادئ", description: "نغمة خفيفة وأقل إزعاجاً." },
-  { id: "urgent", label: "قوي", description: "تنبيه أسرع وأوضح إذا تبي شيء يلفت الانتباه." },
-  { id: "chime", label: "جرس", description: "صوت جرس قصير بنغمة أعلى." },
-];
-const THEME_OPTIONS: { id: ThemeId; label: string; className: string }[] = [
-  { id: "emerald", label: "أخضر", className: "bg-[radial-gradient(circle_at_top,#134e4a_0%,#0f172a_42%,#020617_100%)]" },
-  { id: "blue", label: "أزرق", className: "bg-[radial-gradient(circle_at_top,#1d4ed8_0%,#0f172a_42%,#020617_100%)]" },
-  { id: "purple", label: "بنفسجي", className: "bg-[radial-gradient(circle_at_top,#6d28d9_0%,#0f172a_42%,#020617_100%)]" },
-  { id: "orange", label: "برتقالي", className: "bg-[radial-gradient(circle_at_top,#c2410c_0%,#0f172a_42%,#020617_100%)]" },
-];
-
-function isEmojiReply(text: WakeSignalText) {
-  return EMOJI_REPLIES.includes(text);
-}
 
 type FriendRow = {
   friendshipId: string;
   user: Profile;
   label: string;
   isRequester: boolean;
-  lastSignal?: WakeSignal;
-};
-
-type MissedSignal = WakeSignal & {
-  sender?: Profile;
 };
 
 type GroupMemberWithProfile = GroupMember & {
   profile?: Profile;
 };
 
-type GroupRow = Sa7iGroup & {
-  members: GroupMemberWithProfile[];
+type GroupJoinRequestWithProfile = GroupJoinRequest & {
+  requester?: Profile;
 };
 
-function formatSignalDate(value: string) {
-  const date = new Date(value);
-  const day = String(date.getDate()).padStart(2, "0");
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const year = date.getFullYear();
-  const hours = String(date.getHours()).padStart(2, "0");
-  const minutes = String(date.getMinutes()).padStart(2, "0");
-  return `${day}-${month}-${year} ${hours}:${minutes}`;
-}
-
-function formatRelativeTime(value?: string) {
-  if (!value) return "لا يوجد نشاط";
-  const diffMinutes = Math.max(0, Math.round((Date.now() - new Date(value).getTime()) / 60000));
-  if (diffMinutes < 1) return "الآن";
-  if (diffMinutes < 60) return `قبل ${diffMinutes} د`;
-  const hours = Math.round(diffMinutes / 60);
-  if (hours < 24) return `قبل ${hours} س`;
-  return `قبل ${Math.round(hours / 24)} يوم`;
-}
-
-function minutesFromTime(value: string) {
-  const [hours = "0", minutes = "0"] = value.split(":");
-  return Number(hours) * 60 + Number(minutes);
-}
-
-function isQuietNow(enabled: boolean, start: string, end: string) {
-  if (!enabled) return false;
-  const now = new Date();
-  const current = now.getHours() * 60 + now.getMinutes();
-  const startMinutes = minutesFromTime(start);
-  const endMinutes = minutesFromTime(end);
-  if (startMinutes === endMinutes) return true;
-  if (startMinutes < endMinutes) return current >= startMinutes && current < endMinutes;
-  return current >= startMinutes || current < endMinutes;
-}
-
-function safeJsonArray(value: string | null) {
-  if (!value) return [] as string[];
-  try {
-    const parsed = JSON.parse(value);
-    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string") : [];
-  } catch {
-    return [];
-  }
-}
-
-function notificationTextForSignal(senderName: string, text: WakeSignalText) {
-  if (isEmojiReply(text)) {
-    return `${senderName}: وصلك رد سريع`;
-  }
-  return `${senderName}: ${text}`;
-}
-
-function signalDisplayLabel(text: WakeSignalText) {
-  if (text === "✅") return "رد بالموافقة";
-  if (text === "❌") return "رد بالرفض";
-  return text;
-}
-
-function replyToneClass(text?: WakeSignalText) {
-  if (text === "❌") return "bg-rose-500 text-white shadow-[0_0_90px_rgba(244,63,94,0.38)]";
-  return "bg-emerald-400 text-slate-950 shadow-[0_0_90px_rgba(52,211,153,0.45)]";
-}
-
-function ReplyStatusIcon({ text, className = "h-10 w-10" }: { text: WakeSignalText; className?: string }) {
-  if (text === "✅") {
-    return (
-      <svg className={className} viewBox="0 0 24 24" aria-hidden="true" fill="none">
-        <path
-          d="M20 6 9 17l-5-5"
-          stroke="currentColor"
-          strokeWidth="2.8"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-      </svg>
-    );
-  }
-  if (text === "❌") {
-    return (
-      <svg className={className} viewBox="0 0 24 24" aria-hidden="true" fill="none">
-        <path
-          d="M6.5 6.5 17.5 17.5M17.5 6.5 6.5 17.5"
-          stroke="currentColor"
-          strokeWidth="2.8"
-          strokeLinecap="round"
-        />
-      </svg>
-    );
-  }
-  return <span>{text}</span>;
-}
+type GroupRow = ShaltarteebGroup & {
+  members: GroupMemberWithProfile[];
+  join_requests?: GroupJoinRequestWithProfile[];
+};
 
 function usernameToEmail(username: string) {
-  return `${username.toLowerCase()}@sa7i.local`;
+  return `${username.toLowerCase()}@shaltarteeb.local`;
 }
 
 function normalizeUsername(username: string) {
   return username.trim().toLowerCase();
 }
 
-function urlBase64ToUint8Array(value: string) {
-  const padding = "=".repeat((4 - (value.length % 4)) % 4);
-  const base64 = (value + padding).replace(/-/g, "+").replace(/_/g, "/");
-  const raw = window.atob(base64);
-  return Uint8Array.from([...raw].map((char) => char.charCodeAt(0)));
-}
-
-function subscriptionKeys(subscription: PushSubscription) {
-  const json = subscription.toJSON();
-  return {
-    p256dh: json.keys?.p256dh ?? "",
-    auth: json.keys?.auth ?? "",
-  };
-}
-
-function buttonClass(variant: "primary" | "ghost" | "danger" = "primary") {
+function buttonClass(variant: "primary" | "ghost" | "danger" | "sky" = "primary") {
   const base =
     "rounded-2xl px-5 py-3 text-sm font-bold transition active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-60";
-  if (variant === "ghost") {
-    return `${base} border border-white/15 bg-white/10 text-white hover:bg-white/15`;
-  }
-  if (variant === "danger") {
-    return `${base} bg-rose-500 text-white shadow-lg shadow-rose-500/25 hover:bg-rose-400`;
-  }
+  if (variant === "ghost") return `${base} border border-white/15 bg-white/10 text-white hover:bg-white/15`;
+  if (variant === "danger") return `${base} bg-rose-500 text-white shadow-lg shadow-rose-500/25 hover:bg-rose-400`;
+  if (variant === "sky") return `${base} bg-sky-300 text-slate-950 shadow-lg shadow-sky-300/25 hover:bg-sky-200`;
   return `${base} bg-emerald-400 text-slate-950 shadow-lg shadow-emerald-400/25 hover:bg-emerald-300`;
 }
 
-function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string) {
-  return Promise.race([
-    promise,
-    new Promise<T>((_, reject) => {
-      window.setTimeout(() => reject(new Error(message)), timeoutMs);
-    }),
-  ]);
+function cardClass(extra = "") {
+  return `rounded-[2rem] border border-white/10 bg-white/10 p-5 shadow-2xl backdrop-blur sm:p-6 ${extra}`;
 }
 
+function formatMoney(value?: number | null) {
+  const number = Number(value ?? 0);
+  return `${number.toLocaleString("ar-QA", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ر.ق`;
+}
+
+function toNumber(value: string) {
+  if (!value.trim()) return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
 
 function ToastBanner({ toast }: { toast: Toast }) {
   if (!toast) return null;
-
   const toneClass =
     toast.tone === "error"
       ? "border-rose-400/40 bg-rose-950/90 text-rose-50"
@@ -204,75 +80,12 @@ function ToastBanner({ toast }: { toast: Toast }) {
         ? "border-amber-300/40 bg-amber-950/90 text-amber-50"
         : "border-emerald-300/40 bg-emerald-950/90 text-emerald-50";
 
-  return (
-    <div className={`fixed left-5 top-5 z-50 max-w-sm rounded-2xl border px-5 py-4 text-sm shadow-2xl backdrop-blur ${toneClass}`}>
-      {toast.message}
-    </div>
-  );
-}
-
-function InviteCodeCard({ inviteCode, onCopy }: { inviteCode?: string; onCopy: () => void }) {
-  return (
-    <div className="rounded-3xl border border-emerald-300/20 bg-emerald-300/10 p-4">
-      <p className="text-xs text-white/60">كود الإضافة الخاص فيك</p>
-      <button
-        className="mt-2 w-full rounded-xl bg-slate-950/70 px-4 py-3 font-mono text-2xl font-black tracking-[0.35em] text-emerald-200"
-        onClick={onCopy}
-        title="اضغط لنسخ الكود"
-        type="button"
-      >
-        {inviteCode || "--------"}
-      </button>
-      <p className="mt-2 text-xs leading-5 text-white/50">أرسل هذا الكود لصديقك عشان يضيفك.</p>
-    </div>
-  );
-}
-
-function AddFriendForm({
-  friendCode,
-  friendLabel,
-  busy,
-  onSubmit,
-  onFriendCodeChange,
-  onFriendLabelChange,
-}: {
-  friendCode: string;
-  friendLabel: string;
-  busy: boolean;
-  onSubmit: (event: React.FormEvent<HTMLFormElement>) => void;
-  onFriendCodeChange: (value: string) => void;
-  onFriendLabelChange: (value: string) => void;
-}) {
-  return (
-    <form className="rounded-3xl border border-white/10 bg-white/10 p-4" onSubmit={onSubmit}>
-      <p className="mb-3 text-sm font-black text-white">كود صديقك</p>
-      <input
-        className="mb-3 w-full rounded-2xl border border-white/10 bg-slate-950/70 px-4 py-3 font-mono text-lg tracking-[0.25em] text-white outline-none ring-emerald-300/50 placeholder:font-sans placeholder:tracking-normal focus:ring-4"
-        value={friendCode}
-        onChange={(event) => onFriendCodeChange(event.target.value.toUpperCase())}
-        placeholder="مثال: A1B2C3D4"
-        inputMode="text"
-        maxLength={8}
-        dir="ltr"
-      />
-      <input
-        className="mb-3 w-full rounded-2xl border border-white/10 bg-slate-950/70 px-4 py-3 text-white outline-none ring-emerald-300/50 focus:ring-4"
-        value={friendLabel}
-        onChange={(event) => onFriendLabelChange(event.target.value)}
-        placeholder="الاسم اللي بيظهر عندك لهذا الشخص"
-        maxLength={40}
-      />
-      <button className={`${buttonClass()} w-full`} disabled={busy}>
-        إرسال طلب
-      </button>
-    </form>
-  );
+  return <div className={`fixed left-5 top-5 z-50 max-w-sm rounded-2xl border px-5 py-4 text-sm shadow-2xl backdrop-blur ${toneClass}`}>{toast.message}</div>;
 }
 
 export default function Home() {
   const supabase = useMemo(() => createClient(), []);
   const configured = hasSupabaseConfig();
-  const audioContextRef = useRef<AudioContext | null>(null);
 
   const [view, setView] = useState<View>("auth");
   const [mode, setMode] = useState<"login" | "signup">("login");
@@ -285,690 +98,216 @@ export default function Home() {
   const [outgoingRequests, setOutgoingRequests] = useState<Friendship[]>([]);
   const [groups, setGroups] = useState<GroupRow[]>([]);
   const [selectedGroup, setSelectedGroup] = useState<GroupRow | null>(null);
-  const [newGroupName, setNewGroupName] = useState("");
-  const [selectedGroupFriendIds, setSelectedGroupFriendIds] = useState<string[]>([]);
-  const [expandedFriendId, setExpandedFriendId] = useState<string | null>(null);
-  const [selectedFriend, setSelectedFriend] = useState<FriendRow | null>(null);
-  const [latestIncoming, setLatestIncoming] = useState<WakeSignal | null>(null);
-  const [missedSignals, setMissedSignals] = useState<MissedSignal[]>([]);
-  const [pendingSignalCount, setPendingSignalCount] = useState(0);
+  const [publicGroup, setPublicGroup] = useState<GroupRow | null>(null);
+  const [publicGroupBlocked, setPublicGroupBlocked] = useState(false);
   const [friendCode, setFriendCode] = useState("");
   const [friendLabel, setFriendLabel] = useState("");
-  const [friendLabelEdits, setFriendLabelEdits] = useState<Record<string, string>>({});
   const [acceptLabels, setAcceptLabels] = useState<Record<string, string>>({});
-  const [quietEnabled, setQuietEnabled] = useState(() => {
-    if (typeof window === "undefined") return false;
-    return window.localStorage.getItem(QUIET_ENABLED_STORAGE_KEY) === "true";
-  });
-  const [quietStart, setQuietStart] = useState(() => typeof window === "undefined" ? "23:00" : window.localStorage.getItem(QUIET_START_STORAGE_KEY) || "23:00");
-  const [quietEnd, setQuietEnd] = useState(() => typeof window === "undefined" ? "08:00" : window.localStorage.getItem(QUIET_END_STORAGE_KEY) || "08:00");
-  const [mutedFriendIds, setMutedFriendIds] = useState<string[]>(() => typeof window === "undefined" ? [] : safeJsonArray(window.localStorage.getItem(MUTED_FRIENDS_STORAGE_KEY)));
-  const [theme, setTheme] = useState<ThemeId>(() => {
-    if (typeof window === "undefined") return "emerald";
-    const savedTheme = window.localStorage.getItem(THEME_STORAGE_KEY);
-    return THEME_OPTIONS.some((option) => option.id === savedTheme) ? (savedTheme as ThemeId) : "emerald";
-  });
-  const [wakeSound, setWakeSound] = useState<WakeSoundId>(() => {
-    if (typeof window === "undefined") return "classic";
-    const savedSound = window.localStorage.getItem(WAKE_SOUND_STORAGE_KEY);
-    return WAKE_SOUND_OPTIONS.some((option) => option.id === savedSound) ? (savedSound as WakeSoundId) : "classic";
-  });
-  const [pushEnabled, setPushEnabled] = useState(false);
+  const [friendLabelEdits, setFriendLabelEdits] = useState<Record<string, string>>({});
+  const [memberLabelEdits, setMemberLabelEdits] = useState<Record<string, string>>({});
+  const [memberNoteEdits, setMemberNoteEdits] = useState<Record<string, string>>({});
+  const [memberDueEdits, setMemberDueEdits] = useState<Record<string, string>>({});
+  const [memberPaidEdits, setMemberPaidEdits] = useState<Record<string, string>>({});
+  const [expandedFriendId, setExpandedFriendId] = useState<string | null>(null);
+  const [selectedGroupFriendIds, setSelectedGroupFriendIds] = useState<string[]>([]);
+  const [newGroupName, setNewGroupName] = useState("");
+  const [newGroupDescription, setNewGroupDescription] = useState("");
+  const [newGroupType, setNewGroupType] = useState<GroupType>("arrangement");
+  const [newGroupDate, setNewGroupDate] = useState("");
+  const [newGroupTime, setNewGroupTime] = useState("");
+  const [newGroupLocation, setNewGroupLocation] = useState("");
+  const [newGroupLocationUrl, setNewGroupLocationUrl] = useState("");
+  const [newGroupVisibility, setNewGroupVisibility] = useState<GroupVisibility>("private");
+  const [allowJoinRequests, setAllowJoinRequests] = useState(true);
+  const [newTotalAmount, setNewTotalAmount] = useState("");
+  const [autoSplitAmount, setAutoSplitAmount] = useState(true);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState<Toast>(null);
+
+  const groupParam = typeof window === "undefined" ? null : new URLSearchParams(window.location.search).get("group");
+  const activeGroups = groups.filter((group) => acceptedMember(group, profile?.id));
+  const groupInvitations = groups.filter((group) => invitedMember(group, profile?.id));
+  const pendingJoinRequests = groups.flatMap((group) =>
+    group.created_by === profile?.id ? (group.join_requests ?? []).filter((request) => request.status === "pending").map((request) => ({ ...request, group })) : []
+  );
+  const notificationCount = incomingRequests.length + groupInvitations.length + pendingJoinRequests.length;
 
   function notify(message: string, tone: ToastTone = "ok") {
     setToast({ message, tone });
     window.setTimeout(() => setToast(null), 3800);
   }
 
-  function vibrate(pattern: number | number[] = 30) {
-    navigator.vibrate?.(pattern);
+  function acceptedMember(group: GroupRow, profileId?: string | null) {
+    if (!profileId) return null;
+    return group.members.find((member) => member.profile_id === profileId && member.membership_status === "accepted") ?? null;
   }
 
-  const themeClass = THEME_OPTIONS.find((option) => option.id === theme)?.className ?? THEME_OPTIONS[0].className;
-  const quietActive = isQuietNow(quietEnabled, quietStart, quietEnd);
-  const acceptedGroups = groups.filter((group) =>
-    group.members.some((member) => member.profile_id === profile?.id && member.membership_status === "accepted")
-  );
-  const groupInvitations = groups.filter((group) =>
-    group.members.some((member) => member.profile_id === profile?.id && member.membership_status === "invited")
-  );
-  const invitationCount = incomingRequests.length + groupInvitations.length;
-  const notificationCount = pendingSignalCount + invitationCount;
-
-  async function syncPushPreferences(next?: Partial<{ quietEnabled: boolean; quietStart: string; quietEnd: string; mutedFriendIds: string[] }>) {
-    if (!profile || !("serviceWorker" in navigator)) return;
-    const registration = await navigator.serviceWorker.ready.catch(() => null);
-    const subscription = await registration?.pushManager.getSubscription();
-    if (!subscription) return;
-    const values = {
-      quietEnabled,
-      quietStart,
-      quietEnd,
-      mutedFriendIds,
-      ...next,
-    };
-    await supabase
-      .from("push_subscriptions")
-      .update({
-        quiet_enabled: values.quietEnabled,
-        quiet_start: values.quietStart,
-        quiet_end: values.quietEnd,
-        muted_friend_ids: values.mutedFriendIds,
-      })
-      .eq("endpoint", subscription.endpoint)
-      .eq("profile_id", profile.id);
+  function invitedMember(group: GroupRow, profileId?: string | null) {
+    if (!profileId) return null;
+    return group.members.find((member) => member.profile_id === profileId && member.membership_status === "invited") ?? null;
   }
 
-  function playWakeSound(sound: WakeSoundId = wakeSound) {
-    const AudioCtx = window.AudioContext ||
-      (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-    if (!AudioCtx) return;
-
-    const context = audioContextRef.current ?? new AudioCtx();
-    audioContextRef.current = context;
-
-    const patterns: Record<WakeSoundId, { offsets: number[]; frequencies: number[]; volume: number; duration: number; type: OscillatorType }> = {
-      classic: { offsets: [0, 0.18, 0.36], frequencies: [660, 880, 660], volume: 0.24, duration: 0.16, type: "sine" },
-      soft: { offsets: [0, 0.24], frequencies: [520, 620], volume: 0.14, duration: 0.22, type: "triangle" },
-      urgent: { offsets: [0, 0.11, 0.22, 0.33], frequencies: [900, 740, 900, 740], volume: 0.28, duration: 0.1, type: "square" },
-      chime: { offsets: [0, 0.16, 0.32], frequencies: [784, 988, 1319], volume: 0.2, duration: 0.24, type: "sine" },
-    };
-
-    const pattern = patterns[sound];
-    const now = context.currentTime;
-    pattern.offsets.forEach((offset, index) => {
-      const oscillator = context.createOscillator();
-      const gain = context.createGain();
-      oscillator.type = pattern.type;
-      oscillator.frequency.setValueAtTime(pattern.frequencies[index] ?? pattern.frequencies[0], now + offset);
-      gain.gain.setValueAtTime(0.0001, now + offset);
-      gain.gain.exponentialRampToValueAtTime(pattern.volume, now + offset + 0.02);
-      gain.gain.exponentialRampToValueAtTime(0.0001, now + offset + pattern.duration);
-      oscillator.connect(gain);
-      gain.connect(context.destination);
-      oscillator.start(now + offset);
-      oscillator.stop(now + offset + pattern.duration + 0.02);
-    });
+  function memberName(member: GroupMemberWithProfile, group?: GroupRow | null) {
+    if (member.display_label) return member.display_label;
+    if (member.profile_id === profile?.id) return profile.display_name || profile.username || "أنت";
+    return friendLabelForProfile(member.profile_id) || member.profile?.display_name || member.profile?.username || (group?.created_by === member.profile_id ? "الأدمن" : "عضو");
   }
 
-  function changeWakeSound(sound: WakeSoundId) {
-    setWakeSound(sound);
-    window.localStorage.setItem(WAKE_SOUND_STORAGE_KEY, sound);
-    playWakeSound(sound);
-    notify("تم تغيير صوت التنبيه.");
+  function friendLabelForProfile(profileId: string) {
+    return friends.find((friend) => friend.user.id === profileId)?.label;
   }
 
-  function changeTheme(nextTheme: ThemeId) {
-    setTheme(nextTheme);
-    window.localStorage.setItem(THEME_STORAGE_KEY, nextTheme);
-    notify("تم تغيير لون الواجهة.");
+  function groupMembers(group: GroupRow) {
+    return [...(group.members ?? [])]
+      .filter((member) => member.membership_status === "accepted")
+      .sort((a, b) => memberName(a, group).localeCompare(memberName(b, group), "ar"));
   }
 
-  function updateQuietHours(next: Partial<{ enabled: boolean; start: string; end: string }>) {
-    const values = {
-      enabled: next.enabled ?? quietEnabled,
-      start: next.start ?? quietStart,
-      end: next.end ?? quietEnd,
-    };
-    setQuietEnabled(values.enabled);
-    setQuietStart(values.start);
-    setQuietEnd(values.end);
-    window.localStorage.setItem(QUIET_ENABLED_STORAGE_KEY, String(values.enabled));
-    window.localStorage.setItem(QUIET_START_STORAGE_KEY, values.start);
-    window.localStorage.setItem(QUIET_END_STORAGE_KEY, values.end);
-    void syncPushPreferences({ quietEnabled: values.enabled, quietStart: values.start, quietEnd: values.end });
+  function groupTotals(group: GroupRow) {
+    const members = groupMembers(group);
+    const due = members.reduce((sum, member) => sum + Number(member.amount_due ?? 0), 0);
+    const paid = members.reduce((sum, member) => sum + Number(member.amount_paid ?? 0), 0);
+    return { due, paid, remaining: Math.max(0, due - paid) };
   }
 
-  function toggleMuteFriend(friendId: string) {
-    const next = mutedFriendIds.includes(friendId)
-      ? mutedFriendIds.filter((id) => id !== friendId)
-      : [...mutedFriendIds, friendId];
-    setMutedFriendIds(next);
-    window.localStorage.setItem(MUTED_FRIENDS_STORAGE_KEY, JSON.stringify(next));
-    void syncPushPreferences({ mutedFriendIds: next });
-    notify(next.includes(friendId) ? "تم كتم تنبيهات هذا الصديق على هذا الجهاز." : "تم إلغاء كتم هذا الصديق.");
-  }
-
-  async function showBrowserNotification(title: string, body: string) {
-    if (!("Notification" in window)) return;
-    if (Notification.permission === "default") {
-      await Notification.requestPermission();
-    }
-    if (Notification.permission === "granted") {
-      new Notification(title, {
-        body,
-        icon: "/icons/icon-192.svg",
-        badge: "/icons/icon-192.svg",
-        dir: "rtl",
-      });
-    }
-  }
-
-  async function enableSystemNotifications() {
-    if (!profile) return;
-    if (!PUBLIC_VAPID_KEY) {
-      notify("أضف NEXT_PUBLIC_VAPID_PUBLIC_KEY في Vercel/.env أولاً.", "error");
-      return;
-    }
-    if (!("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window)) {
-      notify("هذا المتصفح ما يدعم تنبيهات النظام للـ PWA.", "error");
-      return;
-    }
-
-    setBusy(true);
-    try {
-      const permission = await Notification.requestPermission();
-      if (permission !== "granted") {
-        notify("لازم تسمح للتنبيهات من إعدادات المتصفح/النظام.", "error");
-        return;
-      }
-
-      const registration = await navigator.serviceWorker.ready;
-      const existing = await registration.pushManager.getSubscription();
-      const subscription = existing ?? await registration.pushManager.subscribe({
-        userVisibleOnly: true,
-        applicationServerKey: urlBase64ToUint8Array(PUBLIC_VAPID_KEY),
-      });
-      const keys = subscriptionKeys(subscription);
-      if (!keys.p256dh || !keys.auth) throw new Error("تعذر قراءة مفاتيح الاشتراك.");
-
-      const { error } = await supabase.from("push_subscriptions").upsert(
-        {
-          profile_id: profile.id,
-          endpoint: subscription.endpoint,
-          p256dh: keys.p256dh,
-          auth: keys.auth,
-          user_agent: navigator.userAgent,
-          quiet_enabled: quietEnabled,
-          quiet_start: quietStart,
-          quiet_end: quietEnd,
-          muted_friend_ids: mutedFriendIds,
-        },
-        { onConflict: "endpoint" }
-      );
-      if (error) throw error;
-
-      setPushEnabled(true);
-      notify("تم تفعيل تنبيهات النظام لهذا الجهاز.");
-    } catch (error) {
-      notify(error instanceof Error ? error.message : "تعذر تفعيل تنبيهات النظام.", "error");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function testSystemNotifications() {
-    if (!pushEnabled) {
-      notify("فعّل تنبيهات النظام على هذا الجهاز أولاً.", "warn");
-      return;
-    }
-    setBusy(true);
-    try {
-      const { data, error } = await supabase.functions.invoke("send-signal-push", {
-        body: { test: true },
-      });
-      if (error) throw error;
-      const result = data as { attempted?: number; delivered?: number; failed?: number } | null;
-      if (!result?.attempted) {
-        notify("ما لقيت اشتراك محفوظ لهذا الجهاز. اضغط تفعيل التنبيهات مرة ثانية.", "error");
-      } else if (!result.delivered) {
-        notify(`وصل الطلب للـ Function لكن فشل إرسال Push. failed=${result.failed ?? "?"}`, "error");
-      } else {
-        notify("أرسلت تنبيه اختبار. إذا ما ظهر، راجع إعدادات تنبيهات Chrome/Android.");
-      }
-    } catch (error) {
-      notify(error instanceof Error ? `فشل اختبار التنبيه: ${error.message}` : "فشل اختبار التنبيه.", "error");
-    } finally {
-      setBusy(false);
-    }
+  function shareUrl(group: GroupRow) {
+    if (typeof window === "undefined") return "";
+    return `${window.location.origin}${window.location.pathname}?group=${group.id}`;
   }
 
   async function ensureProfile(userId: string, uname: string, name?: string) {
     const normalized = normalizeUsername(uname);
     const { data, error } = await supabase
       .from("profiles")
-      .upsert(
-        {
-          id: userId,
-          username: normalized,
-          display_name: name?.trim() || normalized,
-        },
-        { onConflict: "id" }
-      )
+      .upsert({ id: userId, username: normalized, display_name: name?.trim() || normalized }, { onConflict: "id" })
       .select("*")
       .single();
-
     if (error) throw error;
-    setProfile(data);
+    setProfile(data as Profile);
     return data as Profile;
   }
 
-  async function loadMissedSignals(userId: string) {
+  async function loadFriendships(userId: string) {
     const { data, error } = await supabase
-      .from("wake_signals")
-      .select("*, sender:profiles!wake_signals_sender_id_fkey(*)")
-      .eq("receiver_id", userId)
-      .is("seen_at", null)
-      .order("created_at", { ascending: false });
-
-    if (error) {
-      notify(error.message, "error");
-      return [];
-    }
-
-    const signals = (data ?? []) as unknown as MissedSignal[];
-    setMissedSignals(signals);
-    setPendingSignalCount(signals.length);
-    return signals;
-  }
-
-  function friendLabelForProfile(profileId: string, friendRows = friends) {
-    const friend = friendRows.find((row) => row.user.id === profileId);
-    return friend?.label;
-  }
-
-  function memberDisplayName(member: GroupMemberWithProfile) {
-    if (member.profile_id === profile?.id) return profile.display_name || profile.username || "أنت";
-    return friendLabelForProfile(member.profile_id) || member.profile?.display_name || member.profile?.username || "عضو";
-  }
-
-  function acceptedGroupMembers(group: GroupRow) {
-    return group.members.filter((member) => member.membership_status === "accepted");
-  }
-
-  function groupCounts(group: GroupRow) {
-    const members = acceptedGroupMembers(group);
-    return {
-      yes: members.filter((member) => member.response === "yes").length,
-      no: members.filter((member) => member.response === "no").length,
-      pending: members.filter((member) => !member.response).length,
-      invited: group.members.filter((member) => member.membership_status === "invited").length,
-    };
-  }
-
-
-  async function loadGroups(userId: string, friendRows = friends) {
-    const { data, error } = await supabase
-      .from("groups")
-      .select("*, members:group_members(*, profile:profiles!group_members_profile_id_fkey(*))")
-      .order("updated_at", { ascending: false });
-
-    if (error) {
-      notify(error.message, "error");
-      return [];
-    }
-
-    const loadedGroups = ((data ?? []) as unknown as GroupRow[]).map((group) => ({
-      ...group,
-      members: [...(group.members ?? [])].sort((a, b) => {
-        if (a.profile_id === userId) return -1;
-        if (b.profile_id === userId) return 1;
-        return (friendLabelForProfile(a.profile_id, friendRows) || a.profile?.username || "").localeCompare(
-          friendLabelForProfile(b.profile_id, friendRows) || b.profile?.username || "",
-          "ar"
-        );
-      }),
-    }));
-    setGroups(loadedGroups);
-    setSelectedGroup((current) => {
-      const refreshed = loadedGroups.find((group) => group.id === current?.id) ?? null;
-      return refreshed?.members.some((member) => member.profile_id === userId && member.membership_status === "accepted") ? refreshed : null;
-    });
-    return loadedGroups;
-  }
-
-  async function loadEverything(userId: string) {
-    const { data: myProfile, error: profileError } = await supabase
-      .from("profiles")
-      .select("*")
-      .eq("id", userId)
-      .single();
-
-    if (profileError) throw profileError;
-    setProfile(myProfile);
-
-    const { data: friendships, error: friendsError } = await supabase
       .from("friendships")
-      .select(
-        "id, requester_id, addressee_id, requester_label, addressee_label, status, created_at, updated_at, requester:profiles!friendships_requester_id_fkey(*), addressee:profiles!friendships_addressee_id_fkey(*)"
-      )
+      .select("id, requester_id, addressee_id, requester_label, addressee_label, status, created_at, updated_at, requester:profiles!friendships_requester_id_fkey(*), addressee:profiles!friendships_addressee_id_fkey(*)")
       .or(`requester_id.eq.${userId},addressee_id.eq.${userId}`)
       .order("updated_at", { ascending: false });
+    if (error) throw error;
 
-    if (friendsError) throw friendsError;
-
-    const rows = (friendships ?? []) as unknown as Friendship[];
+    const rows = (data ?? []) as unknown as Friendship[];
     const acceptedFriends = rows
       .filter((row) => row.status === "accepted")
       .map((row) => {
         const isRequester = row.requester_id === userId;
         const user = isRequester ? row.addressee! : row.requester!;
-        const label = (isRequester ? row.requester_label : row.addressee_label) ||
-          user.display_name ||
-          user.username;
-
         return {
           friendshipId: row.id,
           user,
-          label,
+          label: (isRequester ? row.requester_label : row.addressee_label) || user.display_name || user.username,
           isRequester,
         };
       });
 
-    const friendIds = acceptedFriends.map((friend) => friend.user.id);
-    let friendsWithActivity = acceptedFriends;
-    if (friendIds.length > 0) {
-      const { data: recentSignals } = await supabase
-        .from("wake_signals")
-        .select("*")
-        .or(`sender_id.in.(${friendIds.join(",")}),receiver_id.in.(${friendIds.join(",")})`)
-        .or(`sender_id.eq.${userId},receiver_id.eq.${userId}`)
-        .order("created_at", { ascending: false })
-        .limit(80);
-
-      friendsWithActivity = acceptedFriends.map((friend) => ({
-        ...friend,
-        lastSignal: (recentSignals as WakeSignal[] | null | undefined)?.find(
-          (signal) => signal.sender_id === friend.user.id || signal.receiver_id === friend.user.id
-        ),
-      }));
-    }
-
-    setFriends(friendsWithActivity);
-    setIncomingRequests(
-      rows.filter((row) => row.status === "pending" && row.addressee_id === userId)
-    );
-    setOutgoingRequests(
-      rows.filter((row) => row.status === "pending" && row.requester_id === userId)
-    );
-
-    await loadMissedSignals(userId);
-    await loadGroups(userId, friendsWithActivity);
-    return friendsWithActivity;
+    setFriends(acceptedFriends);
+    setIncomingRequests(rows.filter((row) => row.status === "pending" && row.addressee_id === userId));
+    setOutgoingRequests(rows.filter((row) => row.status === "pending" && row.requester_id === userId));
+    return acceptedFriends;
   }
 
-  async function loadLatestIncoming(friendId: string) {
-    if (!profile) return null;
+  async function loadGroups(userId: string) {
     const { data, error } = await supabase
-      .from("wake_signals")
-      .select("*")
-      .eq("sender_id", friendId)
-      .eq("receiver_id", profile.id)
-      .is("seen_at", null)
-      .order("created_at", { ascending: false })
-      .limit(1)
+      .from("groups")
+      .select("*, members:group_members(*, profile:profiles!group_members_profile_id_fkey(*)), join_requests:group_join_requests(*, requester:profiles!group_join_requests_requester_id_fkey(*))")
+      .order("updated_at", { ascending: false });
+    if (error) throw error;
+
+    const loaded = ((data ?? []) as unknown as GroupRow[]).map((group) => ({
+      ...group,
+      members: group.members ?? [],
+      join_requests: group.join_requests ?? [],
+    }));
+    setGroups(loaded);
+    setSelectedGroup((current) => loaded.find((group) => group.id === current?.id) ?? loaded.find((group) => acceptedMember(group, userId)) ?? null);
+    return loaded;
+  }
+
+  async function loadEverything(userId: string) {
+    const { data: myProfile, error: profileError } = await supabase.from("profiles").select("*").eq("id", userId).single();
+    if (profileError) throw profileError;
+    setProfile(myProfile as Profile);
+    await loadFriendships(userId);
+    return loadGroups(userId);
+  }
+
+  async function loadPublicGroup(groupId: string) {
+    const { data, error } = await supabase
+      .from("groups")
+      .select("*, members:group_members(*)")
+      .eq("id", groupId)
       .maybeSingle();
 
-    if (error) {
-      notify(error.message, "error");
-      return null;
+    if (error || !data) {
+      setPublicGroup(null);
+      setPublicGroupBlocked(true);
+      return;
     }
-    return data as WakeSignal | null;
+    const group = data as unknown as GroupRow;
+    setPublicGroup({ ...group, members: group.members ?? [] });
+    setPublicGroupBlocked(false);
   }
-
-  async function chooseFriend(friend: FriendRow) {
-    setSelectedFriend(friend);
-    const incoming = await loadLatestIncoming(friend.user.id);
-    setLatestIncoming(incoming);
-  }
-
-  async function openFriendFromNotification(friend: FriendRow, receiverId: string) {
-    setSelectedFriend(friend);
-    setView("home");
-    const { data, error } = await supabase
-      .from("wake_signals")
-      .select("*")
-      .eq("sender_id", friend.user.id)
-      .eq("receiver_id", receiverId)
-      .is("seen_at", null)
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-
-    if (!error) setLatestIncoming(data as WakeSignal | null);
-    window.history.replaceState(null, "", window.location.pathname);
-  }
-
-  useEffect(() => {
-    if ("serviceWorker" in navigator) {
-      navigator.serviceWorker.register("/sw.js").catch(() => {
-        // PWA enhancement فقط؛ التطبيق يشتغل حتى لو التسجيل فشل.
-      });
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!profile || !("serviceWorker" in navigator) || !("PushManager" in window)) return;
-    navigator.serviceWorker.ready
-      .then((registration) => registration.pushManager.getSubscription())
-      .then((subscription) => setPushEnabled(Boolean(subscription)))
-      .catch(() => setPushEnabled(false));
-  }, [profile]);
 
   useEffect(() => {
     let mounted = true;
-
     async function bootstrap() {
       if (!configured) {
         setLoading(false);
         return;
       }
-
       setLoading(true);
       try {
-        const { data, error } = await withTimeout(
-          supabase.auth.getUser(),
-          8000,
-          "Supabase auth bootstrap timed out"
-        );
+        if (groupParam) await loadPublicGroup(groupParam);
+        const { data, error } = await supabase.auth.getUser();
         if (!mounted) return;
         if (error) throw error;
-
         if (data.user) {
-          try {
-            const loadedFriends = await loadEverything(data.user.id);
-            const notificationFriendId = new URLSearchParams(window.location.search).get("friend");
-            const notificationFriend = loadedFriends.find((friend) => friend.user.id === notificationFriendId);
-            if (notificationFriend) {
-              await openFriendFromNotification(notificationFriend, data.user.id);
-            } else {
-              setView("home");
-            }
-          } catch {
-            await supabase.auth.signOut();
-            setView("auth");
-          }
+          await loadEverything(data.user.id);
+          setView(groupParam ? "groups" : "home");
         }
       } catch {
-        if (mounted) {
-          setView("auth");
-          notify("تعذر الاتصال بـ Supabase. تأكد من إعدادات البيئة أو جرّب لاحقاً.", "error");
-        }
+        if (mounted) setView("auth");
       } finally {
         if (mounted) setLoading(false);
       }
     }
-
-    bootstrap();
-    return () => {
-      mounted = false;
-    };
-  // الصفحة تحتاج bootstrap مرة واحدة عند فتح التطبيق؛ loadEverything يقرأ الحالة الحالية من Supabase.
+    void bootstrap();
+    return () => { mounted = false; };
+  // bootstrap once per initial URL/client.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [supabase]);
 
   useEffect(() => {
     if (!profile) return;
-
     const channel = supabase
-      .channel(`wake-signals-${profile.id}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "INSERT",
-          schema: "public",
-          table: "wake_signals",
-          filter: `receiver_id=eq.${profile.id}`,
-        },
-        async (payload) => {
-          const signal = payload.new as WakeSignal;
-          const sender = friends.find((friend) => friend.user.id === signal.sender_id);
-          const isMuted = mutedFriendIds.includes(signal.sender_id);
-          if (!isMuted && !quietActive) playWakeSound();
-          if (!isMuted) vibrate([30, 20, 30]);
-          const senderName = sender?.label || sender?.user.display_name || sender?.user.username || "صديقك";
-          const notificationText = notificationTextForSignal(senderName, signal.text);
-          notify(isMuted ? `${senderName}: تنبيه مكتوم محفوظ في التنبيهات الفائتة` : notificationText, isMuted ? "ok" : "warn");
-          await loadMissedSignals(profile.id);
-          if (!isMuted && !quietActive) await showBrowserNotification("Sa7i", notificationText);
-          if (selectedFriend?.user.id === signal.sender_id) {
-            setLatestIncoming(signal);
-          }
-        }
-      )
+      .channel(`shaltarteeb-${profile.id}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "friendships", filter: `requester_id=eq.${profile.id}` }, () => void loadEverything(profile.id))
+      .on("postgres_changes", { event: "*", schema: "public", table: "friendships", filter: `addressee_id=eq.${profile.id}` }, () => void loadEverything(profile.id))
+      .on("postgres_changes", { event: "*", schema: "public", table: "groups" }, () => void loadGroups(profile.id))
+      .on("postgres_changes", { event: "*", schema: "public", table: "group_members" }, () => void loadGroups(profile.id))
+      .on("postgres_changes", { event: "*", schema: "public", table: "group_join_requests" }, () => void loadGroups(profile.id))
       .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  // Realtime callback intentionally reads latest UI state and refreshes missed signals from Supabase.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [friends, mutedFriendIds, profile, quietActive, selectedFriend, supabase, wakeSound]);
-
-  useEffect(() => {
-    if (!profile) return;
-
-    const channel = supabase
-      .channel(`friendships-${profile.id}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "friendships",
-          filter: `requester_id=eq.${profile.id}`,
-        },
-        () => loadEverything(profile.id)
-      )
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "friendships",
-          filter: `addressee_id=eq.${profile.id}`,
-        },
-        async (payload) => {
-          await loadEverything(profile.id);
-          const request = payload.new as Partial<Friendship>;
-          if (payload.eventType === "INSERT" && request.status === "pending") {
-            notify("وصلتك دعوة صداقة جديدة في التنبيهات.", "warn");
-            await showBrowserNotification("دعوة صداقة", "وصلتك دعوة صداقة جديدة");
-          }
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  // نعيد تحميل القوائم لما تصل/تتغير طلبات الصداقة للطرف الحالي.
+    return () => { supabase.removeChannel(channel); };
+  // Realtime refreshes authenticated lists.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profile, supabase]);
 
-  useEffect(() => {
-    if (!profile) return;
-
-    const channel = supabase
-      .channel(`groups-${profile.id}`)
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "groups" },
-        () => loadGroups(profile.id)
-      )
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "group_members" },
-        async (payload) => {
-          await loadGroups(profile.id);
-          const member = payload.new as Partial<GroupMember>;
-          if (payload.eventType === "INSERT" && member.profile_id === profile.id && member.membership_status === "invited") {
-            notify("وصلتك دعوة قروب جديدة في التنبيهات.", "warn");
-            await showBrowserNotification("دعوة قروب", "وصلتك دعوة قروب جديدة");
-          }
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  // Group membership/response changes should refresh the group cards for this user.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [friends, profile, supabase]);
-
-  useEffect(() => {
-    if (!profile || !selectedFriend) return;
-
-    let cancelled = false;
-
-    async function refreshSelectedFriend() {
-      const { data, error } = await supabase
-        .from("wake_signals")
-        .select("*")
-        .eq("sender_id", selectedFriend!.user.id)
-        .eq("receiver_id", profile!.id)
-        .is("seen_at", null)
-        .order("created_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-
-      if (!cancelled && !error) {
-        setLatestIncoming((data as WakeSignal | null) ?? null);
-        await loadMissedSignals(profile!.id);
-      }
-    }
-
-    const interval = window.setInterval(refreshSelectedFriend, 4000);
-    const handleVisibility = () => {
-      if (document.visibilityState === "visible") {
-        void refreshSelectedFriend();
-      }
-    };
-
-    document.addEventListener("visibilitychange", handleVisibility);
-    window.addEventListener("focus", refreshSelectedFriend);
-    void refreshSelectedFriend();
-
-    return () => {
-      cancelled = true;
-      window.clearInterval(interval);
-      document.removeEventListener("visibilitychange", handleVisibility);
-      window.removeEventListener("focus", refreshSelectedFriend);
-    };
-  // Mobile browsers can pause websocket updates; poll/open-refresh keeps the friend button current.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [profile, selectedFriend, supabase]);
-
   async function handleAuth(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!configured) {
-      notify("أضف قيم Supabase في .env.local أو Vercel Environment Variables أولاً.", "error");
-      return;
-    }
+    if (!configured) return notify("أضف قيم Supabase في .env.local أو Vercel Environment Variables أولاً.", "error");
     const normalized = normalizeUsername(username);
-
-    if (!USERNAME_RE.test(normalized)) {
-      notify("اسم المستخدم لازم يكون 3-24 حرف/رقم/شرطة سفلية.", "error");
-      return;
-    }
-    if (password.length < 6) {
-      notify("كلمة المرور لازم تكون 6 أحرف على الأقل.", "error");
-      return;
-    }
+    if (!USERNAME_RE.test(normalized)) return notify("اسم المستخدم لازم يكون 3-24 حرف/رقم/شرطة سفلية.", "error");
+    if (password.length < 6) return notify("كلمة المرور لازم تكون 6 أحرف على الأقل.", "error");
 
     setBusy(true);
     try {
@@ -976,25 +315,20 @@ export default function Home() {
         const { data, error } = await supabase.auth.signUp({
           email: usernameToEmail(normalized),
           password,
-          options: { data: { username: normalized } },
+          options: { data: { username: normalized, display_name: displayName.trim() || normalized } },
         });
         if (error) throw error;
         if (!data.user) throw new Error("لم يتم إنشاء المستخدم.");
         await ensureProfile(data.user.id, normalized, displayName);
-        notify("تم إنشاء الحساب.");
       } else {
-        const { data, error } = await supabase.auth.signInWithPassword({
-          email: usernameToEmail(normalized),
-          password,
-        });
+        const { data, error } = await supabase.auth.signInWithPassword({ email: usernameToEmail(normalized), password });
         if (error) throw error;
         if (!data.user) throw new Error("تعذر تسجيل الدخول.");
         await loadEverything(data.user.id);
-        notify("تم تسجيل الدخول.");
       }
-
-      setView("home");
       setPassword("");
+      setView("home");
+      notify(mode === "login" ? "تم تسجيل الدخول." : "تم إنشاء الحساب.");
     } catch (error) {
       notify(error instanceof Error ? error.message : "حدث خطأ غير معروف.", "error");
     } finally {
@@ -1010,44 +344,22 @@ export default function Home() {
     setOutgoingRequests([]);
     setGroups([]);
     setSelectedGroup(null);
-    setExpandedFriendId(null);
-    setSelectedFriend(null);
-    setMissedSignals([]);
-    setPendingSignalCount(0);
     setView("auth");
   }
 
   async function addFriend(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!profile) return;
-
     const targetCode = friendCode.trim().toUpperCase().replace(/[^A-F0-9]/g, "");
-    if (!/^[A-F0-9]{8}$/.test(targetCode)) {
-      notify("اكتب كود إضافة صحيح من 8 خانات.", "error");
-      return;
-    }
-    if (targetCode === profile.invite_code) {
-      notify("ما تقدر تضيف نفسك.", "error");
-      return;
-    }
-
+    if (!/^[A-F0-9]{8}$/.test(targetCode)) return notify("اكتب كود إضافة صحيح من 8 خانات.", "error");
+    if (targetCode === profile.invite_code) return notify("ما تقدر تضيف نفسك.", "error");
     setBusy(true);
     try {
-      const { data: target, error: targetError } = await supabase
-        .from("profiles")
-        .select("*")
-        .eq("invite_code", targetCode)
-        .single();
+      const { data: target, error: targetError } = await supabase.from("profiles").select("*").eq("invite_code", targetCode).single();
       if (targetError) throw new Error("ما حصلت حساب بهذا الكود.");
-
-      const label = friendLabel.trim() || (target as Profile).display_name || (target as Profile).username;
-      const { error } = await supabase.from("friendships").insert({
-        requester_id: profile.id,
-        addressee_id: (target as Profile).id,
-        requester_label: label,
-      });
+      const targetProfile = target as Profile;
+      const { error } = await supabase.from("friendships").insert({ requester_id: profile.id, addressee_id: targetProfile.id, requester_label: friendLabel.trim() || targetProfile.display_name || targetProfile.username });
       if (error) throw error;
-
       setFriendCode("");
       setFriendLabel("");
       await loadEverything(profile.id);
@@ -1059,137 +371,61 @@ export default function Home() {
     }
   }
 
+  async function acceptFriendship(friendship: Friendship) {
+    if (!profile) return;
+    const defaultLabel = friendship.requester?.display_name || friendship.requester?.username || "صديقي";
+    setBusy(true);
+    try {
+      const { error } = await supabase.from("friendships").update({ status: "accepted", addressee_label: acceptLabels[friendship.id]?.trim() || defaultLabel }).eq("id", friendship.id);
+      if (error) throw error;
+      await loadEverything(profile.id);
+      notify("قبلت طلب الإضافة.");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "تعذر قبول الطلب.", "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function rejectFriendship(friendship: Friendship) {
+    if (!profile) return;
+    setBusy(true);
+    try {
+      const { error } = await supabase.from("friendships").delete().eq("id", friendship.id).eq("addressee_id", profile.id).eq("status", "pending");
+      if (error) throw error;
+      await loadEverything(profile.id);
+      notify("رفضت طلب الإضافة.", "warn");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "تعذر رفض الطلب.", "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function saveFriendLabel(friend: FriendRow) {
     if (!profile) return;
-    const fallbackLabel = friend.user.display_name || friend.user.username;
-    const label = (friendLabelEdits[friend.friendshipId] ?? friend.label).trim() || fallbackLabel;
+    const label = (friendLabelEdits[friend.friendshipId] ?? friend.label).trim() || friend.user.display_name || friend.user.username;
     const labelColumn = friend.isRequester ? "requester_label" : "addressee_label";
     const ownerColumn = friend.isRequester ? "requester_id" : "addressee_id";
-
     setBusy(true);
     try {
-      const { error } = await supabase
-        .from("friendships")
-        .update({ [labelColumn]: label })
-        .eq("id", friend.friendshipId)
-        .eq(ownerColumn, profile.id)
-        .eq("status", "accepted");
+      const { error } = await supabase.from("friendships").update({ [labelColumn]: label }).eq("id", friend.friendshipId).eq(ownerColumn, profile.id).eq("status", "accepted");
       if (error) throw error;
-
-      setFriends((rows) =>
-        rows.map((row) => row.friendshipId === friend.friendshipId ? { ...row, label } : row)
-      );
-      setSelectedFriend((current) =>
-        current?.friendshipId === friend.friendshipId ? { ...current, label } : current
-      );
-      setFriendLabelEdits((labels) => {
-        const next = { ...labels };
-        delete next[friend.friendshipId];
-        return next;
-      });
       await loadEverything(profile.id);
-      notify("تم تحديث الاسم الظاهر لهذا الصديق.");
+      notify("تم تحديث اسم الصديق عندك.");
     } catch (error) {
-      notify(error instanceof Error ? error.message : "تعذر تحديث الاسم الظاهر.", "error");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  function toggleGroupFriend(friendId: string) {
-    setSelectedGroupFriendIds((ids) =>
-      ids.includes(friendId) ? ids.filter((id) => id !== friendId) : [...ids, friendId]
-    );
-  }
-
-  async function createGroup(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!profile) return;
-    const name = newGroupName.trim();
-    if (!name) {
-      notify("اكتب اسم القروب أولاً.", "error");
-      return;
-    }
-    if (selectedGroupFriendIds.length === 0) {
-      notify("اختر صديق واحد على الأقل للقروب.", "error");
-      return;
-    }
-
-    setBusy(true);
-    try {
-      const groupId = crypto.randomUUID();
-      const { error: groupError } = await supabase.from("groups").insert({
-        id: groupId,
-        created_by: profile.id,
-        name,
-      });
-      if (groupError) throw groupError;
-
-      const memberRows = [profile.id, ...selectedGroupFriendIds].map((profileId) => ({
-        group_id: groupId,
-        profile_id: profileId,
-        added_by: profile.id,
-        membership_status: profileId === profile.id ? "accepted" : "invited",
-      }));
-      const { error: membersError } = await supabase.from("group_members").insert(memberRows);
-      if (membersError) throw membersError;
-
-      setNewGroupName("");
-      setSelectedGroupFriendIds([]);
-      const loadedGroups = await loadGroups(profile.id);
-      setSelectedGroup(loadedGroups.find((group) => group.id === groupId) ?? null);
-      notify("تم إنشاء القروب وإرسال الدعوات.");
-    } catch (error) {
-      notify(error instanceof Error ? error.message : "تعذر إنشاء القروب.", "error");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function updateGroupResponse(group: GroupRow, response: GroupResponse) {
-    if (!profile) return;
-    setBusy(true);
-    const respondedAt = response ? new Date().toISOString() : null;
-    try {
-      const { error } = await supabase
-        .from("group_members")
-        .update({ response, responded_at: respondedAt })
-        .eq("group_id", group.id)
-        .eq("profile_id", profile.id)
-        .eq("membership_status", "accepted");
-      if (error) throw error;
-
-      const updateGroup = (row: GroupRow): GroupRow => ({
-        ...row,
-        members: row.members.map((member) =>
-          member.profile_id === profile.id ? { ...member, response, responded_at: respondedAt } : member
-        ),
-      });
-      setGroups((rows) => rows.map((row) => row.id === group.id ? updateGroup(row) : row));
-      setSelectedGroup((current) => current?.id === group.id ? updateGroup(current) : current);
-      notify(response === "yes" ? "تم اختيار صح." : response === "no" ? "تم اختيار لا." : "رجعت الحالة بدون قرار.", response === "no" ? "warn" : "ok");
-    } catch (error) {
-      notify(error instanceof Error ? error.message : "تعذر تحديث ردك.", "error");
+      notify(error instanceof Error ? error.message : "تعذر تحديث الاسم.", "error");
     } finally {
       setBusy(false);
     }
   }
 
   async function deleteFriend(friend: FriendRow) {
-    if (!profile) return;
-    const confirmed = window.confirm(`حذف ${friend.label} من قائمة الأصدقاء؟`);
-    if (!confirmed) return;
-
+    if (!profile || !window.confirm(`حذف ${friend.label} من قائمة الأصدقاء؟`)) return;
     setBusy(true);
     try {
-      const { error } = await supabase
-        .from("friendships")
-        .delete()
-        .eq("id", friend.friendshipId)
-        .eq("status", "accepted");
+      const { error } = await supabase.from("friendships").delete().eq("id", friend.friendshipId).eq("status", "accepted");
       if (error) throw error;
-
-      setExpandedFriendId(null);
       await loadEverything(profile.id);
       notify("تم حذف الصديق.", "warn");
     } catch (error) {
@@ -1199,20 +435,161 @@ export default function Home() {
     }
   }
 
+  function toggleGroupFriend(friendId: string) {
+    setSelectedGroupFriendIds((ids) => ids.includes(friendId) ? ids.filter((id) => id !== friendId) : [...ids, friendId]);
+  }
+
+  async function createGroup(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!profile) return;
+    const name = newGroupName.trim();
+    if (!name) return notify("اكتب اسم القروب أولاً.", "error");
+    const totalAmount = toNumber(newTotalAmount);
+    if (newGroupType === "qutiyyah" && newTotalAmount.trim() && totalAmount === null) return notify("اكتب مبلغ صحيح أو اتركه فاضي.", "error");
+
+    setBusy(true);
+    try {
+      const groupId = crypto.randomUUID();
+      const memberIds = [profile.id, ...selectedGroupFriendIds];
+      const splitAmount = newGroupType === "qutiyyah" && autoSplitAmount && totalAmount ? Number((totalAmount / memberIds.length).toFixed(2)) : null;
+      const { error: groupError } = await supabase.from("groups").insert({
+        id: groupId,
+        created_by: profile.id,
+        name,
+        description: newGroupDescription.trim() || null,
+        group_type: newGroupType,
+        event_date: newGroupDate || null,
+        event_time: newGroupTime || null,
+        location_name: newGroupLocation.trim() || null,
+        location_url: newGroupLocationUrl.trim() || null,
+        visibility: newGroupVisibility,
+        allow_join_requests: newGroupVisibility === "public" ? allowJoinRequests : false,
+        total_amount: newGroupType === "qutiyyah" ? totalAmount : null,
+        auto_split_amount: newGroupType === "qutiyyah" ? autoSplitAmount : false,
+      });
+      if (groupError) throw groupError;
+
+      const rows = memberIds.map((profileId) => {
+        const friend = friends.find((row) => row.user.id === profileId);
+        return {
+          group_id: groupId,
+          profile_id: profileId,
+          added_by: profile.id,
+          membership_status: profileId === profile.id ? "accepted" : "invited",
+          display_label: profileId === profile.id ? profile.display_name || profile.username : friend?.label ?? null,
+          amount_due: splitAmount,
+          amount_paid: 0,
+          is_money_manager: profileId === profile.id && newGroupType === "qutiyyah",
+        };
+      });
+      const { error: membersError } = await supabase.from("group_members").insert(rows);
+      if (membersError) throw membersError;
+
+      setNewGroupName("");
+      setNewGroupDescription("");
+      setNewGroupDate("");
+      setNewGroupTime("");
+      setNewGroupLocation("");
+      setNewGroupLocationUrl("");
+      setNewTotalAmount("");
+      setSelectedGroupFriendIds([]);
+      const loaded = await loadGroups(profile.id);
+      setSelectedGroup(loaded.find((group) => group.id === groupId) ?? null);
+      setView("groups");
+      notify("تم إنشاء القروب.");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "تعذر إنشاء القروب.", "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function updateGroupResponse(group: GroupRow, member: GroupMemberWithProfile, response: GroupResponse) {
+    if (!profile) return;
+    const isCreator = group.created_by === profile.id;
+    if (!isCreator && member.profile_id !== profile.id) return notify("تقدر تعدل مربعك فقط.", "error");
+    setBusy(true);
+    try {
+      const { error } = await supabase.from("group_members").update({ response, responded_at: response ? new Date().toISOString() : null }).eq("id", member.id);
+      if (error) throw error;
+      await loadGroups(profile.id);
+      notify(response === "yes" ? "تم اختيار صح." : response === "no" ? "تم اختيار لا." : "رجعت الحالة بدون قرار.");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "تعذر تحديث الحالة.", "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function saveMemberDetails(group: GroupRow, member: GroupMemberWithProfile) {
+    if (!profile) return;
+    const isCreator = group.created_by === profile.id;
+    const myMember = acceptedMember(group, profile.id);
+    const isMoneyManager = Boolean(myMember?.is_money_manager);
+    const canEditMoney = isCreator || isMoneyManager;
+    const canEditLabel = isCreator;
+    const canEditNote = isCreator || member.profile_id === profile.id;
+    const update: Partial<GroupMember> = {};
+
+    if (canEditLabel) update.display_label = (memberLabelEdits[member.id] ?? memberName(member, group)).trim() || null;
+    if (canEditNote) update.note = (memberNoteEdits[member.id] ?? member.note ?? "").trim() || null;
+    if (group.group_type === "qutiyyah" && canEditMoney) {
+      update.amount_due = toNumber(memberDueEdits[member.id] ?? String(member.amount_due ?? ""));
+      update.amount_paid = toNumber(memberPaidEdits[member.id] ?? String(member.amount_paid ?? ""));
+    }
+    if (Object.keys(update).length === 0) return;
+
+    setBusy(true);
+    try {
+      const { error } = await supabase.from("group_members").update(update).eq("id", member.id);
+      if (error) throw error;
+      await loadGroups(profile.id);
+      notify("تم الحفظ.");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "تعذر الحفظ.", "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function toggleMoneyManager(group: GroupRow, member: GroupMemberWithProfile) {
+    if (!profile || group.created_by !== profile.id) return;
+    setBusy(true);
+    try {
+      const { error } = await supabase.from("group_members").update({ is_money_manager: !member.is_money_manager }).eq("id", member.id);
+      if (error) throw error;
+      await loadGroups(profile.id);
+      notify(!member.is_money_manager ? "تم تعيين مسؤول قطيّة." : "تم إلغاء مسؤول القطيّة.");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "تعذر تحديث الصلاحية.", "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function inviteFriendToGroup(group: GroupRow, friend: FriendRow) {
+    if (!profile) return;
+    setBusy(true);
+    try {
+      const { error } = await supabase.from("group_members").insert({ group_id: group.id, profile_id: friend.user.id, added_by: profile.id, membership_status: "invited", display_label: friend.label, amount_due: 0, amount_paid: 0 });
+      if (error) throw error;
+      await loadGroups(profile.id);
+      notify("تم إرسال دعوة القروب.");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "تعذر إرسال الدعوة.", "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function acceptGroupInvite(group: GroupRow) {
     if (!profile) return;
     setBusy(true);
     try {
-      const { error } = await supabase
-        .from("group_members")
-        .update({ membership_status: "accepted" })
-        .eq("group_id", group.id)
-        .eq("profile_id", profile.id)
-        .eq("membership_status", "invited");
+      const { error } = await supabase.from("group_members").update({ membership_status: "accepted" }).eq("group_id", group.id).eq("profile_id", profile.id).eq("membership_status", "invited");
       if (error) throw error;
-
-      const loadedGroups = await loadGroups(profile.id);
-      setSelectedGroup(loadedGroups.find((row) => row.id === group.id) ?? null);
+      const loaded = await loadGroups(profile.id);
+      setSelectedGroup(loaded.find((row) => row.id === group.id) ?? null);
       setView("groups");
       notify("قبلت دعوة القروب.");
     } catch (error) {
@@ -1226,14 +603,8 @@ export default function Home() {
     if (!profile) return;
     setBusy(true);
     try {
-      const { error } = await supabase
-        .from("group_members")
-        .delete()
-        .eq("group_id", group.id)
-        .eq("profile_id", profile.id)
-        .eq("membership_status", "invited");
+      const { error } = await supabase.from("group_members").delete().eq("group_id", group.id).eq("profile_id", profile.id).eq("membership_status", "invited");
       if (error) throw error;
-
       await loadGroups(profile.id);
       notify("رفضت دعوة القروب.", "warn");
     } catch (error) {
@@ -1243,437 +614,224 @@ export default function Home() {
     }
   }
 
-  async function inviteFriendToGroup(group: GroupRow, friend: FriendRow) {
-    if (!profile) return;
-    setBusy(true);
-    try {
-      const { error } = await supabase.from("group_members").insert({
-        group_id: group.id,
-        profile_id: friend.user.id,
-        added_by: profile.id,
-        membership_status: "invited",
-      });
-      if (error) throw error;
-
-      const loadedGroups = await loadGroups(profile.id);
-      setSelectedGroup(loadedGroups.find((row) => row.id === group.id) ?? null);
-      notify("تم إرسال دعوة القروب.");
-    } catch (error) {
-      notify(error instanceof Error ? error.message : "تعذر إرسال الدعوة.", "error");
-    } finally {
-      setBusy(false);
-    }
-  }
-
   async function removeGroupMember(group: GroupRow, member: GroupMemberWithProfile) {
     if (!profile) return;
     const isSelf = member.profile_id === profile.id;
-    if (group.created_by === profile.id && isSelf) {
-      notify("منشئ القروب ما يطلع نفسه حالياً. تقدر تزيل الأعضاء أو تترك القروب بدون استخدامه.", "warn");
-      return;
-    }
-    const confirmed = window.confirm(isSelf ? `الخروج من ${group.name}؟` : `إزالة ${memberDisplayName(member)} من ${group.name}؟`);
-    if (!confirmed) return;
-
+    if (group.created_by === profile.id && isSelf) return notify("منشئ القروب ما يطلع نفسه حالياً.", "warn");
+    if (!window.confirm(isSelf ? `الخروج من ${group.name}؟` : `إزالة ${memberName(member, group)} من ${group.name}؟`)) return;
     setBusy(true);
     try {
-      const { error } = await supabase
-        .from("group_members")
-        .delete()
-        .eq("group_id", group.id)
-        .eq("profile_id", member.profile_id);
+      const { error } = await supabase.from("group_members").delete().eq("id", member.id);
       if (error) throw error;
-
-      const loadedGroups = await loadGroups(profile.id);
-      const refreshed = loadedGroups.find((row) => row.id === group.id) ?? null;
-      setSelectedGroup(isSelf ? null : refreshed);
-      notify(isSelf ? "طلعت من القروب." : "تمت إزالة العضو من القروب.", "warn");
+      const loaded = await loadGroups(profile.id);
+      setSelectedGroup(isSelf ? null : loaded.find((row) => row.id === group.id) ?? null);
+      notify(isSelf ? "طلعت من القروب." : "تمت إزالة العضو.", "warn");
     } catch (error) {
-      notify(error instanceof Error ? error.message : "تعذر تحديث عضوية القروب.", "error");
+      notify(error instanceof Error ? error.message : "تعذر تحديث العضوية.", "error");
     } finally {
       setBusy(false);
     }
   }
 
-  async function acceptFriendship(friendship: Friendship) {
-    if (!profile) return;
-    const defaultLabel = friendship.requester?.display_name || friendship.requester?.username || "صديقي";
-    const label = acceptLabels[friendship.id]?.trim() || defaultLabel;
+  async function copyShareLink(group: GroupRow) {
+    await navigator.clipboard?.writeText(shareUrl(group));
+    notify("تم نسخ رابط القروب.");
+  }
+
+  async function requestJoin(group: GroupRow) {
+    if (!profile) return notify("سجل دخول أول عشان تطلب الانضمام.", "warn");
     setBusy(true);
     try {
-      const { error } = await supabase
-        .from("friendships")
-        .update({ status: "accepted", addressee_label: label })
-        .eq("id", friendship.id);
+      const { error } = await supabase.from("group_join_requests").insert({ group_id: group.id, requester_id: profile.id });
       if (error) throw error;
-      await loadEverything(profile.id);
-      notify("قبلت طلب الإضافة.");
-      setAcceptLabels((labels) => {
-        const next = { ...labels };
-        delete next[friendship.id];
-        return next;
-      });
+      notify("تم إرسال طلب الانضمام للأدمن.");
     } catch (error) {
-      notify(error instanceof Error ? error.message : "تعذر قبول الطلب.", "error");
+      notify(error instanceof Error ? error.message : "تعذر إرسال الطلب.", "error");
     } finally {
       setBusy(false);
     }
   }
 
-  async function rejectFriendship(friendship: Friendship) {
+  async function decideJoinRequest(request: GroupJoinRequestWithProfile & { group: GroupRow }, accept: boolean) {
     if (!profile) return;
     setBusy(true);
     try {
-      const { error } = await supabase
-        .from("friendships")
-        .delete()
-        .eq("id", friendship.id)
-        .eq("addressee_id", profile.id)
-        .eq("status", "pending");
-      if (error) throw error;
-      await loadEverything(profile.id);
-      notify("رفضت طلب الإضافة.", "warn");
-      setAcceptLabels((labels) => {
-        const next = { ...labels };
-        delete next[friendship.id];
-        return next;
-      });
-    } catch (error) {
-      notify(error instanceof Error ? error.message : "تعذر رفض الطلب.", "error");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function sendWakeSignal(text?: WakeSignalText) {
-    if (!profile || !selectedFriend) return;
-    setBusy(true);
-    try {
-      const isReply = Boolean(latestIncoming) && !isEmojiReply(latestIncoming!.text);
-      const outgoingText = text ?? (isReply ? "صاحي.." : "صاحي ؟");
-      vibrate(outgoingText === "صاحي ؟" ? [25, 30, 25] : 25);
-      const { data: sentSignal, error } = await supabase
-        .from("wake_signals")
-        .insert({
-          sender_id: profile.id,
-          receiver_id: selectedFriend.user.id,
-          text: outgoingText,
-        })
-        .select("id")
-        .single();
-      if (error) throw error;
-
-      const { data: pushResult, error: pushError } = await supabase.functions.invoke("send-signal-push", {
-        body: { signal_id: sentSignal.id },
-      });
-
-      if (latestIncoming) {
-        await supabase
-          .from("wake_signals")
-          .update({ seen_at: new Date().toISOString() })
-          .eq("id", latestIncoming.id);
-        setLatestIncoming(null);
-        await loadMissedSignals(profile.id);
+      if (accept) {
+        const label = request.requester?.display_name || request.requester?.username || "عضو";
+        const { error: memberError } = await supabase.from("group_members").insert({ group_id: request.group_id, profile_id: request.requester_id, added_by: profile.id, membership_status: "accepted", display_label: label, amount_due: 0, amount_paid: 0 });
+        if (memberError) throw memberError;
       }
-
-      if (pushError) {
-        notify(`أرسلت: ${outgoingText}، لكن تنبيه النظام فشل: ${pushError.message}`, "warn");
-      } else {
-        const result = pushResult as { attempted?: number; delivered?: number; failed?: number } | null;
-        if (!result?.attempted) {
-          notify(`أرسلت: ${outgoingText}، لكن ما فيه جهاز مفعل تنبيهات عند الطرف الثاني.`, "warn");
-        } else if (!result.delivered) {
-          notify(`أرسلت: ${outgoingText}، لكن Push فشل. failed=${result.failed ?? "?"}`, "warn");
-        } else {
-          notify(`أرسلت: ${outgoingText}`);
-        }
-      }
-    } catch (error) {
-      notify(error instanceof Error ? error.message : "تعذر إرسال التنبيه.", "error");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function exitFriend() {
-    if (profile && latestIncoming && isEmojiReply(latestIncoming.text)) {
-      await supabase
-        .from("wake_signals")
-        .update({ seen_at: new Date().toISOString() })
-        .eq("id", latestIncoming.id);
-      await loadMissedSignals(profile.id);
-    }
-    setLatestIncoming(null);
-    setSelectedFriend(null);
-  }
-
-  async function dismissIncoming() {
-    if (!latestIncoming || !profile) return;
-    await supabase
-      .from("wake_signals")
-      .update({ seen_at: new Date().toISOString() })
-      .eq("id", latestIncoming.id);
-    setLatestIncoming(null);
-    await loadMissedSignals(profile.id);
-  }
-
-  function friendForSignal(signal: MissedSignal) {
-    return friends.find((friend) => friend.user.id === signal.sender_id) ?? null;
-  }
-
-  function senderNameForSignal(signal: MissedSignal) {
-    const friend = friendForSignal(signal);
-    return friend?.label || signal.sender?.display_name || signal.sender?.username || "صديقك";
-  }
-
-  async function openMissedSignal(signal: MissedSignal) {
-    const friend = friendForSignal(signal);
-    if (!friend) {
-      notify("ما قدرت أفتح صفحة المرسل. حدّث الصفحة وحاول مرة ثانية.", "error");
-      return;
-    }
-    await chooseFriend(friend);
-  }
-
-  async function copyInviteCode() {
-    if (!profile?.invite_code) return;
-    await navigator.clipboard?.writeText(profile.invite_code);
-    notify("تم نسخ كود الإضافة.");
-  }
-
-  async function clearMissedSignals() {
-    if (!profile || missedSignals.length === 0) return;
-    setBusy(true);
-    try {
-      const { error } = await supabase
-        .from("wake_signals")
-        .update({ seen_at: new Date().toISOString() })
-        .eq("receiver_id", profile.id)
-        .is("seen_at", null);
+      const { error } = await supabase.from("group_join_requests").update({ status: accept ? "accepted" : "rejected" }).eq("id", request.id);
       if (error) throw error;
-      setMissedSignals([]);
-      setPendingSignalCount(0);
-      notify("تم مسح التنبيهات الفائتة.");
+      await loadGroups(profile.id);
+      notify(accept ? "تم قبول طلب الانضمام." : "تم رفض طلب الانضمام.", accept ? "ok" : "warn");
     } catch (error) {
-      notify(error instanceof Error ? error.message : "تعذر مسح التنبيهات.", "error");
+      notify(error instanceof Error ? error.message : "تعذر معالجة الطلب.", "error");
     } finally {
       setBusy(false);
     }
   }
 
   if (loading) {
-    return (
-      <main className="grid min-h-screen place-items-center bg-slate-950 text-white" dir="rtl">
-        <div className="animate-pulse rounded-3xl border border-white/10 bg-white/5 px-8 py-6">
-          جار التحميل...
-        </div>
-      </main>
-    );
+    return <main className="grid min-h-screen place-items-center bg-slate-950 text-white" dir="rtl"><div className="animate-pulse rounded-3xl border border-white/10 bg-white/5 px-8 py-6">جار التحميل...</div></main>;
   }
 
-  if (selectedFriend) {
-    const incomingEmoji = latestIncoming && isEmojiReply(latestIncoming.text);
-    const buttonText = latestIncoming ? (incomingEmoji ? signalDisplayLabel(latestIncoming.text) : "صاحي..") : "صاحي ؟";
-    const mainButtonClass = incomingEmoji ? replyToneClass(latestIncoming.text) : "bg-emerald-400 text-slate-950 shadow-[0_0_90px_rgba(52,211,153,0.45)] hover:scale-105";
+  function renderGroupCard(group: GroupRow, publicReadOnly = false) {
+    const members = groupMembers(group);
+    const isCreator = group.created_by === profile?.id;
+    const myMember = acceptedMember(group, profile?.id);
+    const canManageMoney = isCreator || Boolean(myMember?.is_money_manager);
+    const totals = groupTotals(group);
 
     return (
-      <main className={`min-h-screen overflow-hidden ${themeClass} text-white`} dir="rtl">
-        <div className="mx-auto flex min-h-screen w-full max-w-3xl flex-col px-5 py-6 sm:px-8">
-          <div className="flex items-center justify-between gap-3">
-            <button className={buttonClass("ghost")} onClick={() => void exitFriend()}>
-              رجوع
-            </button>
-            <div className="flex gap-2">
-              <button className={buttonClass("ghost")} onClick={() => toggleMuteFriend(selectedFriend.user.id)}>
-                {mutedFriendIds.includes(selectedFriend.user.id) ? "إلغاء الكتم" : "كتم"}
-              </button>
-              <button className={buttonClass("ghost")} onClick={signOut}>
-                خروج
-              </button>
+      <div className={cardClass()}>
+        <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <div className="mb-2 flex flex-wrap items-center gap-2">
+              <span className={`rounded-full px-3 py-1 text-xs font-black ${group.group_type === "qutiyyah" ? "bg-amber-300 text-slate-950" : "bg-sky-300 text-slate-950"}`}>{group.group_type === "qutiyyah" ? "قطيّة" : "ترتيب"}</span>
+              <span className="rounded-full bg-white/10 px-3 py-1 text-xs font-black text-white/70">{group.visibility === "public" ? "عام" : "خاص"}</span>
+              {isCreator ? <span className="rounded-full bg-emerald-300 px-3 py-1 text-xs font-black text-slate-950">أنت الأدمن</span> : null}
+            </div>
+            <h2 className="text-3xl font-black">{group.name}</h2>
+            {group.description ? <p className="mt-2 max-w-3xl whitespace-pre-wrap text-sm leading-7 text-white/65">{group.description}</p> : null}
+            <div className="mt-3 flex flex-wrap gap-2 text-xs text-white/60">
+              {group.event_date ? <span className="rounded-full bg-black/20 px-3 py-1">التاريخ: {group.event_date}</span> : null}
+              {group.event_time ? <span className="rounded-full bg-black/20 px-3 py-1">الوقت: {group.event_time.slice(0, 5)}</span> : null}
+              {group.location_name ? <span className="rounded-full bg-black/20 px-3 py-1">المكان: {group.location_name}</span> : null}
+              {group.location_url ? <a className="rounded-full bg-black/20 px-3 py-1 text-sky-200 underline" href={group.location_url} target="_blank" rel="noreferrer">رابط الموقع</a> : null}
             </div>
           </div>
-
-          <ToastBanner toast={toast} />
-
-          <section className="flex flex-1 items-center justify-center py-6 text-center sm:py-8">
-            <div className="flex w-full max-w-md flex-col items-center">
-              <p className="mb-3 text-white/60">@{selectedFriend.user.username}</p>
-              <h1 className="mb-3 text-center text-4xl font-black sm:text-6xl">{selectedFriend.label}</h1>
-              <div className="mb-8 flex flex-wrap justify-center gap-2 text-xs">
-                {mutedFriendIds.includes(selectedFriend.user.id) ? (
-                  <span className="rounded-full bg-amber-300/20 px-3 py-1 text-amber-100">مكتوم</span>
-                ) : null}
-                {quietActive ? (
-                  <span className="rounded-full bg-sky-300/20 px-3 py-1 text-sky-100">وضع الهدوء مفعل الآن</span>
-                ) : null}
-              </div>
-
-              <button
-                className={`grid h-64 w-64 place-items-center rounded-full text-5xl font-black transition active:scale-95 disabled:opacity-80 sm:h-80 sm:w-80 sm:text-6xl ${mainButtonClass}`}
-                onClick={incomingEmoji ? dismissIncoming : () => sendWakeSignal()}
-                disabled={busy}
-                aria-label={incomingEmoji ? buttonText : "إرسال تنبيه"}
-              >
-                {incomingEmoji && latestIncoming ? (
-                  <span className="flex flex-col items-center gap-4">
-                    <ReplyStatusIcon text={latestIncoming.text} className="h-24 w-24 sm:h-28 sm:w-28" />
-                    <span className="text-base font-black sm:text-lg">{buttonText}</span>
-                  </span>
-                ) : (
-                  buttonText
-                )}
-              </button>
-
-              {latestIncoming && !incomingEmoji ? (
-                <div className="mt-8 flex justify-center gap-3">
-                  <button
-                    className="grid h-20 w-24 place-items-center rounded-3xl bg-emerald-400 text-slate-950 shadow-lg shadow-emerald-400/25 transition hover:scale-105 active:scale-95 disabled:opacity-60"
-                    onClick={() => sendWakeSignal("✅")}
-                    disabled={busy}
-                    aria-label="رد بالموافقة"
-                    title="رد بالموافقة"
-                  >
-                    <ReplyStatusIcon text="✅" className="h-10 w-10" />
-                  </button>
-                  <button
-                    className="grid h-20 w-24 place-items-center rounded-3xl bg-rose-500 text-white shadow-lg shadow-rose-500/25 transition hover:scale-105 active:scale-95 disabled:opacity-60"
-                    onClick={() => sendWakeSignal("❌")}
-                    disabled={busy}
-                    aria-label="رد بالرفض"
-                    title="رد بالرفض"
-                  >
-                    <ReplyStatusIcon text="❌" className="h-10 w-10" />
-                  </button>
-                </div>
-              ) : null}
-
-              <p className="mx-auto mt-8 max-w-md text-sm leading-7 text-white/55">
-                {incomingEmoji
-                  ? "هذا رد سريع من صديقك. اضغط على الأيقونة لإخفائها."
-                  : latestIncoming
-                    ? "وصلك تنبيه من هذا الشخص. رد بزر صاحي.. أو رد سريع بأيقونة."
-                    : "اضغط الزر، وبيوصل للطرف الثاني صوت وتنبيه داخل التطبيق."}
-              </p>
-            </div>
-          </section>
+          {!publicReadOnly ? <button className={buttonClass("ghost")} onClick={() => copyShareLink(group)} type="button">نسخ رابط المشاركة</button> : null}
         </div>
-      </main>
+
+        {group.group_type === "qutiyyah" ? (
+          <div className="mb-5 grid gap-3 sm:grid-cols-3">
+            <div className="rounded-2xl bg-black/20 p-4"><p className="text-xs text-white/50">الإجمالي المطلوب</p><p className="text-2xl font-black text-amber-200">{formatMoney(totals.due || group.total_amount)}</p></div>
+            <div className="rounded-2xl bg-black/20 p-4"><p className="text-xs text-white/50">المدفوع</p><p className="text-2xl font-black text-emerald-200">{formatMoney(totals.paid)}</p></div>
+            <div className="rounded-2xl bg-black/20 p-4"><p className="text-xs text-white/50">المتبقي</p><p className="text-2xl font-black text-rose-200">{formatMoney(Math.max(0, (totals.due || Number(group.total_amount ?? 0)) - totals.paid))}</p></div>
+          </div>
+        ) : null}
+
+        {members.length === 0 ? (
+          <div className="rounded-2xl border border-dashed border-white/15 bg-black/10 p-8 text-center text-white/55">ما فيه أعضاء مقبولين حالياً.</div>
+        ) : (
+          <div className="grid gap-3 lg:grid-cols-2">
+            {members.map((member) => {
+              const canEditSelfStatus = member.profile_id === profile?.id || isCreator;
+              const canEditLabel = isCreator;
+              const canEditNote = member.profile_id === profile?.id || isCreator;
+              const canEditMoney = group.group_type === "qutiyyah" && (canManageMoney || isCreator);
+              const responseTone = member.response === "yes" ? "border-emerald-300/50 bg-emerald-400/15" : member.response === "no" ? "border-rose-300/50 bg-rose-500/15" : "border-white/10 bg-slate-950/55";
+              return (
+                <div key={member.id} className={`rounded-3xl border p-4 ${responseTone}`}>
+                  <div className="mb-3 flex items-start justify-between gap-2">
+                    <div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <h3 className="text-xl font-black">{memberName(member, group)}</h3>
+                        {member.profile_id === group.created_by ? <span className="rounded-full bg-amber-300 px-2 py-1 text-[11px] font-black text-slate-950">أدمن</span> : null}
+                        {member.is_money_manager ? <span className="rounded-full bg-sky-300 px-2 py-1 text-[11px] font-black text-slate-950">مسؤول قطيّة</span> : null}
+                      </div>
+                      {member.note ? <p className="mt-1 text-sm text-white/60">{member.note}</p> : null}
+                    </div>
+                    <span className="rounded-full bg-black/25 px-3 py-1 text-xs text-white/70">{member.response === "yes" ? "صح" : member.response === "no" ? "لا" : "بدون قرار"}</span>
+                  </div>
+
+                  {group.group_type === "arrangement" ? (
+                    <div className="mb-3 grid grid-cols-3 gap-2">
+                      <button className={`${buttonClass("primary")} py-2`} onClick={() => updateGroupResponse(group, member, "yes")} disabled={!canEditSelfStatus || busy || publicReadOnly} type="button">صح</button>
+                      <button className={`${buttonClass("danger")} py-2`} onClick={() => updateGroupResponse(group, member, "no")} disabled={!canEditSelfStatus || busy || publicReadOnly} type="button">لا</button>
+                      <button className={`${buttonClass("ghost")} py-2`} onClick={() => updateGroupResponse(group, member, null)} disabled={!canEditSelfStatus || busy || publicReadOnly} type="button">بدون</button>
+                    </div>
+                  ) : (
+                    <div className="mb-3 grid grid-cols-2 gap-2 text-sm">
+                      <div className="rounded-2xl bg-black/20 p-3"><span className="block text-xs text-white/50">عليه</span><b>{formatMoney(member.amount_due)}</b></div>
+                      <div className="rounded-2xl bg-black/20 p-3"><span className="block text-xs text-white/50">دفع</span><b>{formatMoney(member.amount_paid)}</b></div>
+                    </div>
+                  )}
+
+                  {!publicReadOnly && (canEditLabel || canEditNote || canEditMoney) ? (
+                    <div className="space-y-2 border-t border-white/10 pt-3">
+                      {canEditLabel ? <input className="w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none" value={memberLabelEdits[member.id] ?? memberName(member, group)} onChange={(event) => setMemberLabelEdits((rows) => ({ ...rows, [member.id]: event.target.value }))} placeholder="اسم العضو داخل القروب" /> : null}
+                      {canEditNote ? <input className="w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none" value={memberNoteEdits[member.id] ?? member.note ?? ""} onChange={(event) => setMemberNoteEdits((rows) => ({ ...rows, [member.id]: event.target.value }))} placeholder="ملاحظة" /> : null}
+                      {canEditMoney ? (
+                        <div className="grid grid-cols-2 gap-2">
+                          <input className="w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none" value={memberDueEdits[member.id] ?? String(member.amount_due ?? "")} onChange={(event) => setMemberDueEdits((rows) => ({ ...rows, [member.id]: event.target.value }))} placeholder="المطلوب" inputMode="decimal" />
+                          <input className="w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none" value={memberPaidEdits[member.id] ?? String(member.amount_paid ?? "")} onChange={(event) => setMemberPaidEdits((rows) => ({ ...rows, [member.id]: event.target.value }))} placeholder="المدفوع" inputMode="decimal" />
+                        </div>
+                      ) : null}
+                      <div className="flex flex-wrap gap-2">
+                        <button className={`${buttonClass("ghost")} py-2`} onClick={() => saveMemberDetails(group, member)} disabled={busy} type="button">حفظ</button>
+                        {isCreator && group.group_type === "qutiyyah" && member.profile_id !== profile?.id ? <button className={`${buttonClass("sky")} py-2`} onClick={() => toggleMoneyManager(group, member)} disabled={busy} type="button">{member.is_money_manager ? "إلغاء مسؤول" : "مسؤول قطيّة"}</button> : null}
+                        {(isCreator || member.profile_id === profile?.id) ? <button className={`${buttonClass("danger")} py-2`} onClick={() => removeGroupMember(group, member)} disabled={busy} type="button">{member.profile_id === profile?.id ? "خروج" : "إزالة"}</button> : null}
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {!publicReadOnly && isCreator ? (
+          <div className="mt-5 rounded-2xl border border-white/10 bg-black/15 p-4">
+            <p className="mb-3 font-black">دعوة أصدقاء إضافيين</p>
+            <div className="flex flex-wrap gap-2">
+              {friends.filter((friend) => !group.members.some((member) => member.profile_id === friend.user.id)).length === 0 ? <p className="text-sm text-white/50">كل أصدقائك موجودين أو مدعوين.</p> : null}
+              {friends.filter((friend) => !group.members.some((member) => member.profile_id === friend.user.id)).map((friend) => <button key={friend.friendshipId} className={`${buttonClass("ghost")} py-2`} onClick={() => inviteFriendToGroup(group, friend)} disabled={busy} type="button">دعوة {friend.label}</button>)}
+            </div>
+          </div>
+        ) : null}
+
+        {publicReadOnly && group.visibility === "public" && group.allow_join_requests ? (
+          <div className="mt-5 rounded-2xl border border-emerald-300/20 bg-emerald-300/10 p-4 text-center">
+            <p className="mb-3 text-sm text-white/70">القروب عام. إذا عندك حساب تقدر تطلب الانضمام من الأدمن.</p>
+            <button className={buttonClass("primary")} onClick={() => requestJoin(group)} disabled={busy || !profile} type="button">طلب الانضمام</button>
+            {!profile ? <p className="mt-2 text-xs text-white/50">سجل دخول أولاً ثم افتح الرابط مرة ثانية.</p> : null}
+          </div>
+        ) : null}
+      </div>
     );
   }
 
+  const publicGroupOnly = groupParam && !profile;
+
   return (
-    <main className={`min-h-screen overflow-hidden ${themeClass} text-white`} dir="rtl">
+    <main className="min-h-screen overflow-hidden bg-[radial-gradient(circle_at_top,#0f766e_0%,#0f172a_42%,#020617_100%)] text-white" dir="rtl">
       <div className="mx-auto flex min-h-screen w-full max-w-6xl flex-col px-5 py-6 sm:px-8">
         <header className={`flex flex-col gap-4 ${profile ? "sm:flex-row sm:items-center sm:justify-between" : "items-center text-center"}`}>
           <div className={profile ? undefined : "mx-auto max-w-xl"}>
-            <p className="text-sm font-semibold text-emerald-300">Sa7i / صاحي</p>
-            <h1 className="text-3xl font-black tracking-tight sm:text-5xl">زر واحد يكفي</h1>
+            <p className="text-sm font-semibold text-emerald-300">شالترتيب!؟</p>
+            <h1 className="text-3xl font-black tracking-tight sm:text-5xl">رتّب القروب بدون شات</h1>
           </div>
           {profile ? (
             <div className="flex flex-wrap gap-2">
-              <button className={buttonClass(view === "home" ? "primary" : "ghost")} onClick={() => setView("home")}>
-                الرئيسية
-              </button>
-              <button className={buttonClass(view === "missed" ? "primary" : "ghost")} onClick={() => setView("missed")}>
-                التنبيهات {notificationCount > 0 ? `(${notificationCount})` : ""}
-              </button>
-              <button className={buttonClass(view === "settings" ? "primary" : "ghost")} onClick={() => setView("settings")}>
-                الإعدادات
-              </button>
-              <button className={buttonClass("ghost")} onClick={signOut}>
-                خروج
-              </button>
+              <button className={buttonClass(view === "home" ? "primary" : "ghost")} onClick={() => setView("home")}>الرئيسية</button>
+              <button className={buttonClass(view === "notifications" ? "primary" : "ghost")} onClick={() => setView("notifications")}>التنبيهات {notificationCount > 0 ? `(${notificationCount})` : ""}</button>
+              <button className={buttonClass(view === "settings" ? "primary" : "ghost")} onClick={() => setView("settings")}>الإعدادات</button>
+              <button className={buttonClass("ghost")} onClick={signOut}>خروج</button>
             </div>
           ) : null}
         </header>
 
         <ToastBanner toast={toast} />
 
-        {view === "auth" ? (
-          <section className="grid flex-1 place-items-center py-12">
-            <div className="w-full max-w-md rounded-[2rem] border border-white/10 bg-white/10 p-6 shadow-2xl backdrop-blur">
-              <div className="mb-6 flex rounded-2xl bg-black/20 p-1">
-                <button
-                  className={`flex-1 rounded-xl py-3 font-bold ${mode === "login" ? "bg-white text-slate-950" : "text-white/70"}`}
-                  onClick={() => setMode("login")}
-                >
-                  دخول
-                </button>
-                <button
-                  className={`flex-1 rounded-xl py-3 font-bold ${mode === "signup" ? "bg-white text-slate-950" : "text-white/70"}`}
-                  onClick={() => setMode("signup")}
-                >
-                  حساب جديد
-                </button>
-              </div>
-
-              {!configured ? (
-                <div className="mb-5 rounded-2xl border border-amber-300/30 bg-amber-500/10 p-4 text-sm leading-7 text-amber-100">
-                  التطبيق مبني بنجاح، لكن يحتاج قيم Supabase في `.env.local` محلياً أو Environment Variables في Vercel قبل تسجيل الدخول.
-                </div>
-              ) : null}
-
-              <form className="space-y-4" onSubmit={handleAuth}>
-                <label className="block">
-                  <span className="mb-2 block text-sm text-white/70">اسم المستخدم</span>
-                  <input
-                    className="w-full rounded-2xl border border-white/10 bg-slate-950/70 px-4 py-3 text-white outline-none ring-emerald-300/50 focus:ring-4"
-                    value={username}
-                    onChange={(event) => setUsername(event.target.value)}
-                    placeholder="مثال: borashid"
-                    autoComplete="username"
-                  />
-                </label>
-
-                {mode === "signup" ? (
-                  <label className="block">
-                    <span className="mb-2 block text-sm text-white/70">الاسم الظاهر اختياري</span>
-                    <input
-                      className="w-full rounded-2xl border border-white/10 bg-slate-950/70 px-4 py-3 text-white outline-none ring-emerald-300/50 focus:ring-4"
-                      value={displayName}
-                      onChange={(event) => setDisplayName(event.target.value)}
-                      placeholder="مثال: بوراشد"
-                    />
-                  </label>
-                ) : null}
-
-                <label className="block">
-                  <span className="mb-2 block text-sm text-white/70">كلمة المرور</span>
-                  <input
-                    className="w-full rounded-2xl border border-white/10 bg-slate-950/70 px-4 py-3 text-white outline-none ring-emerald-300/50 focus:ring-4"
-                    value={password}
-                    onChange={(event) => setPassword(event.target.value)}
-                    placeholder="••••••••"
-                    type="password"
-                    autoComplete={mode === "login" ? "current-password" : "new-password"}
-                  />
-                </label>
-
-                <button className={`${buttonClass()} w-full`} disabled={busy}>
-                  {busy ? "انتظر..." : mode === "login" ? "دخول" : "إنشاء الحساب"}
-                </button>
-              </form>
-            </div>
+        {publicGroupOnly ? (
+          <section className="flex-1 py-8">
+            {publicGroup ? renderGroupCard(publicGroup, true) : <div className={cardClass("text-center")}>{publicGroupBlocked ? "القروب خاص أو الرابط غير صحيح." : "جار تحميل القروب..."}</div>}
+            <div className="mx-auto mt-5 max-w-md">{renderAuthCard()}</div>
           </section>
         ) : null}
 
-        {view === "home" ? (
+        {!publicGroupOnly && view === "auth" ? <section className="grid flex-1 place-items-center py-12">{renderAuthCard()}</section> : null}
+
+        {!publicGroupOnly && view === "home" ? (
           <section className="flex flex-1 items-center py-8">
             <div className="grid w-full gap-5 md:grid-cols-2">
-              <button
-                className="group min-h-[220px] rounded-[2rem] border border-white/10 bg-slate-950/65 p-8 text-center shadow-2xl transition hover:-translate-y-1 hover:border-emerald-300/50 hover:bg-slate-900"
-                onClick={() => setView("friends")}
-                type="button"
-              >
+              <button className="group min-h-[220px] rounded-[2rem] border border-white/10 bg-slate-950/65 p-8 text-center shadow-2xl transition hover:-translate-y-1 hover:border-emerald-300/50 hover:bg-slate-900" onClick={() => setView("friends")} type="button">
                 <span className="mx-auto grid h-20 w-20 place-items-center rounded-3xl bg-emerald-300 text-4xl text-slate-950 shadow-lg shadow-emerald-300/25">👥</span>
                 <h2 className="mt-6 text-4xl font-black">الأصدقاء</h2>
               </button>
-
-              <button
-                className="group min-h-[220px] rounded-[2rem] border border-white/10 bg-slate-950/65 p-8 text-center shadow-2xl transition hover:-translate-y-1 hover:border-sky-300/50 hover:bg-slate-900"
-                onClick={() => setView("groups")}
-                type="button"
-              >
+              <button className="group min-h-[220px] rounded-[2rem] border border-white/10 bg-slate-950/65 p-8 text-center shadow-2xl transition hover:-translate-y-1 hover:border-sky-300/50 hover:bg-slate-900" onClick={() => setView("groups")} type="button">
                 <span className="mx-auto grid h-20 w-20 place-items-center rounded-3xl bg-sky-300 text-4xl text-slate-950 shadow-lg shadow-sky-300/25">▦</span>
                 <h2 className="mt-6 text-4xl font-black">القروبات</h2>
               </button>
@@ -1681,536 +839,85 @@ export default function Home() {
           </section>
         ) : null}
 
-        {view === "friends" ? (
-          <section className="flex-1 py-8">
-            <div className="rounded-[2rem] border border-white/10 bg-white/10 p-5 backdrop-blur sm:p-8">
-              <div className="mb-6 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-                <div>
-                  <h2 className="text-2xl font-black">الأصدقاء</h2>
-                  <p className="mt-1 text-sm text-white/60">
-                    القائمة صارت مضغوطة: اضغط على الصديق عشان تظهر خياراته.
-                  </p>
-                </div>
-                <span className="w-fit rounded-full bg-white/10 px-3 py-1 text-xs font-black text-white/70">
-                  {friends.length} أصدقاء
-                </span>
-              </div>
-
-              {friends.length === 0 ? (
-                <div className="grid min-h-[320px] place-items-center rounded-[2rem] border border-dashed border-white/15 bg-black/10 p-8 text-center">
-                  <div>
-                    <h3 className="text-2xl font-black text-white">ما عندك أصدقاء حالياً</h3>
-                    <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-white/55">
-                      إضافة الأصدقاء وقبول الدعوات صارت داخل الإعدادات عشان تبقى صفحة الأصدقاء للناس المضافين فقط.
-                    </p>
-                    <button className={`${buttonClass("primary")} mt-5`} onClick={() => setView("settings")} type="button">
-                      افتح إعدادات الأصدقاء
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  {friends.map((friend) => {
-                    const editedLabel = friendLabelEdits[friend.friendshipId] ?? friend.label;
-                    const labelChanged = editedLabel.trim() !== friend.label;
-                    const expanded = expandedFriendId === friend.friendshipId;
-
-                    return (
-                      <div
-                        key={friend.friendshipId}
-                        className={`rounded-2xl border transition ${expanded ? "border-emerald-300/50 bg-slate-950/80" : "border-white/10 bg-slate-950/55 hover:border-emerald-300/30"}`}
-                      >
-                        <button
-                          className="flex w-full items-center justify-between gap-3 px-4 py-3 text-right"
-                          onClick={() => setExpandedFriendId(expanded ? null : friend.friendshipId)}
-                          type="button"
-                        >
-                          <span className="min-w-0">
-                            <span className="block truncate text-lg font-black">{friend.label}</span>
-                            <span className="block truncate text-xs text-emerald-300">
-                              @{friend.user.username} · {friend.lastSignal ? `آخر تفاعل: ${signalDisplayLabel(friend.lastSignal.text)}` : "لا يوجد نشاط"}
-                            </span>
-                          </span>
-                          <span className="flex shrink-0 items-center gap-2 text-xs text-white/50">
-                            <span>{formatRelativeTime(friend.lastSignal?.created_at)}</span>
-                            <span className="grid h-8 w-8 place-items-center rounded-xl bg-white/10 text-lg">{expanded ? "−" : "+"}</span>
-                          </span>
-                        </button>
-
-                        {expanded ? (
-                          <div className="border-t border-white/10 p-4">
-                            <div className="grid gap-3 lg:grid-cols-[1fr_auto] lg:items-end">
-                              <label className="block">
-                                <span className="mb-2 block text-xs text-white/55">الاسم اللي يظهر عندك</span>
-                                <input
-                                  className="w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none ring-emerald-300/50 focus:ring-4"
-                                  value={editedLabel}
-                                  onChange={(event) =>
-                                    setFriendLabelEdits((labels) => ({
-                                      ...labels,
-                                      [friend.friendshipId]: event.target.value,
-                                    }))
-                                  }
-                                  maxLength={40}
-                                  placeholder={friend.user.display_name || friend.user.username}
-                                />
-                              </label>
-                              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:min-w-[520px]">
-                                <button className={`${buttonClass("primary")} py-2`} onClick={() => chooseFriend(friend)} type="button">
-                                  فتح الزر
-                                </button>
-                                <button
-                                  className={`${buttonClass(labelChanged ? "primary" : "ghost")} py-2`}
-                                  onClick={() => saveFriendLabel(friend)}
-                                  disabled={busy || !labelChanged}
-                                  type="button"
-                                >
-                                  حفظ الاسم
-                                </button>
-                                <button
-                                  className={`${buttonClass("ghost")} py-2`}
-                                  onClick={() => toggleMuteFriend(friend.user.id)}
-                                  type="button"
-                                >
-                                  {mutedFriendIds.includes(friend.user.id) ? "إلغاء الكتم" : "كتم"}
-                                </button>
-                                <button
-                                  className={`${buttonClass("danger")} py-2`}
-                                  onClick={() => deleteFriend(friend)}
-                                  disabled={busy}
-                                  type="button"
-                                >
-                                  حذف
-                                </button>
-                              </div>
-                            </div>
-                          </div>
-                        ) : null}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          </section>
-        ) : null}
-
-        {view === "groups" ? (
-          <section className="flex-1 py-8">
-            <div className="mb-5 flex flex-col gap-3 rounded-[2rem] border border-white/10 bg-white/10 p-5 backdrop-blur sm:flex-row sm:items-end sm:justify-between">
-              <div>
-                <p className="text-sm font-semibold text-sky-300">القروبات</p>
-                <h2 className="text-3xl font-black">قروباتك النشطة</h2>
-                <p className="mt-2 text-sm leading-6 text-white/55">
-                  هنا فقط القروبات اللي أنت داخلها. إنشاء القروبات وقبول الدعوات نقلناها للإعدادات عشان الصفحة تبقى نظيفة.
-                </p>
-              </div>
-              <button className={buttonClass("ghost")} onClick={() => setView("settings")} type="button">
-                إنشاء/دعوات القروبات
-              </button>
-            </div>
-
-            <section className="grid gap-5 lg:grid-cols-[0.9fr_1.1fr]">
-              <div className="rounded-[2rem] border border-white/10 bg-white/10 p-5 backdrop-blur sm:p-6">
-                <h3 className="mb-4 text-xl font-black">القائمة</h3>
-                {acceptedGroups.length === 0 ? (
-                  <p className="rounded-2xl border border-dashed border-white/15 bg-black/10 p-6 text-center text-sm text-white/55">
-                    ما عندك قروبات نشطة. روح للإعدادات عشان تنشئ قروب أو تقبل دعوة.
-                  </p>
-                ) : (
-                  <div className="max-h-[70vh] space-y-3 overflow-auto pr-1">
-                    {acceptedGroups.map((group) => {
-                      const counts = groupCounts(group);
-                      const isAdmin = group.created_by === profile?.id;
-                      return (
-                        <button
-                          key={group.id}
-                          className={`w-full rounded-2xl border p-4 text-right transition ${
-                            selectedGroup?.id === group.id
-                              ? "border-sky-300/60 bg-sky-300/15"
-                              : "border-white/10 bg-slate-950/60 hover:border-sky-300/40 hover:bg-slate-900"
-                          }`}
-                          onClick={() => setSelectedGroup(group)}
-                          type="button"
-                        >
-                          <div className="flex items-start justify-between gap-3">
-                            <div>
-                              <div className="flex flex-wrap items-center gap-2">
-                                <p className="text-lg font-black">{group.name}</p>
-                                {isAdmin ? (
-                                  <span className="rounded-full bg-amber-300 px-2 py-1 text-[11px] font-black text-slate-950">👑 أدمن</span>
-                                ) : null}
-                              </div>
-                              <p className="mt-1 text-xs text-white/50">{acceptedGroupMembers(group).length} داخل · {counts.invited} دعوة معلقة</p>
-                            </div>
-                            <div className="flex flex-wrap justify-end gap-1 text-xs font-black">
-                              <span className="rounded-full bg-emerald-400 px-2 py-1 text-slate-950">صح {counts.yes}</span>
-                              <span className="rounded-full bg-rose-500 px-2 py-1 text-white">لا {counts.no}</span>
-                              <span className="rounded-full bg-white/15 px-2 py-1 text-white">بدون {counts.pending}</span>
-                            </div>
-                          </div>
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-
-              <div className="rounded-[2rem] border border-white/10 bg-white/10 p-5 backdrop-blur sm:p-8">
-                {selectedGroup ? (
-                  <div>
-                    <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                      <div>
-                        <div className="flex flex-wrap items-center gap-2">
-                          <p className="text-sm font-semibold text-sky-300">قروب</p>
-                          {selectedGroup.created_by === profile?.id ? (
-                            <span className="rounded-full bg-amber-300 px-2 py-1 text-[11px] font-black text-slate-950">👑 أنت الأدمن</span>
-                          ) : null}
-                        </div>
-                        <h2 className="mt-1 text-3xl font-black">{selectedGroup.name}</h2>
-                        <p className="mt-2 text-sm text-white/55">اختر صح أو لا، أو رجّع نفسك بدون قرار.</p>
-                      </div>
-                      <div className="grid grid-cols-3 gap-2 sm:min-w-72">
-                        <button className={`${buttonClass("primary")} py-2`} onClick={() => updateGroupResponse(selectedGroup, "yes")} disabled={busy} type="button">صح</button>
-                        <button className={`${buttonClass("danger")} py-2`} onClick={() => updateGroupResponse(selectedGroup, "no")} disabled={busy} type="button">لا</button>
-                        <button className={`${buttonClass("ghost")} py-2`} onClick={() => updateGroupResponse(selectedGroup, null)} disabled={busy} type="button">بدون قرار</button>
-                      </div>
-                    </div>
-
-                    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                      {acceptedGroupMembers(selectedGroup).map((member) => {
-                        const tone = member.response === "yes"
-                          ? "border-emerald-300/50 bg-emerald-400 text-slate-950 shadow-emerald-400/20"
-                          : member.response === "no"
-                            ? "border-rose-300/50 bg-rose-500 text-white shadow-rose-500/20"
-                            : "border-white/10 bg-slate-950/60 text-white";
-                        const responseText = member.response === "yes" ? "صح" : member.response === "no" ? "لا" : "بدون قرار";
-                        const isCreator = member.profile_id === selectedGroup.created_by;
-                        const canRemove = member.profile_id === profile?.id || selectedGroup.created_by === profile?.id;
-                        return (
-                          <div key={member.id} className={`min-h-36 rounded-3xl border p-4 shadow-lg ${tone}`}>
-                            <div className="flex h-full flex-col justify-between gap-4">
-                              <div>
-                                <div className="flex flex-wrap items-center gap-2">
-                                  <p className="text-lg font-black">{memberDisplayName(member)}</p>
-                                  {isCreator ? (
-                                    <span className="rounded-full bg-amber-300 px-2 py-0.5 text-[10px] font-black text-slate-950">👑 أدمن</span>
-                                  ) : null}
-                                </div>
-                                <p className={`text-xs ${member.response === "yes" ? "text-slate-800" : "text-white/60"}`}>@{member.profile?.username || "member"}</p>
-                              </div>
-                              <div className="flex items-center justify-between gap-3">
-                                <span className="text-sm font-black">{responseText}</span>
-                                {member.response === "yes" ? (
-                                  <ReplyStatusIcon text="✅" className="h-10 w-10" />
-                                ) : member.response === "no" ? (
-                                  <ReplyStatusIcon text="❌" className="h-10 w-10" />
-                                ) : (
-                                  <span className="grid h-10 w-10 place-items-center rounded-2xl border border-white/15 text-xl text-white/40">؟</span>
-                                )}
-                              </div>
-                              {canRemove ? (
-                                <button
-                                  className={`${buttonClass(member.profile_id === profile?.id ? "ghost" : "danger")} py-2`}
-                                  onClick={() => removeGroupMember(selectedGroup, member)}
-                                  disabled={busy}
-                                  type="button"
-                                >
-                                  {member.profile_id === profile?.id ? "الخروج من القروب" : "إزالة العضو"}
-                                </button>
-                              ) : null}
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-
-                    {selectedGroup.created_by === profile?.id ? (
-                      <div className="mt-5 rounded-2xl border border-white/10 bg-black/15 p-4">
-                        <p className="mb-3 text-sm font-black text-white">دعوة أصدقاء إضافيين</p>
-                        {friends.filter((friend) => !selectedGroup.members.some((member) => member.profile_id === friend.user.id)).length === 0 ? (
-                          <p className="text-sm text-white/50">كل أصدقائك موجودين أو مدعوين في هذا القروب.</p>
-                        ) : (
-                          <div className="flex flex-wrap gap-2">
-                            {friends
-                              .filter((friend) => !selectedGroup.members.some((member) => member.profile_id === friend.user.id))
-                              .map((friend) => (
-                                <button key={friend.friendshipId} className={`${buttonClass("ghost")} py-2`} onClick={() => inviteFriendToGroup(selectedGroup, friend)} disabled={busy} type="button">
-                                  دعوة {friend.label}
-                                </button>
-                              ))}
-                          </div>
-                        )}
-                      </div>
-                    ) : null}
-
-                    {selectedGroup.members.some((member) => member.membership_status === "invited") ? (
-                      <div className="mt-5 rounded-2xl border border-amber-300/20 bg-amber-300/10 p-4">
-                        <p className="mb-3 text-sm font-black text-amber-100">دعوات معلقة</p>
-                        <div className="flex flex-wrap gap-2 text-xs">
-                          {selectedGroup.members.filter((member) => member.membership_status === "invited").map((member) => (
-                            <span key={member.id} className="rounded-full bg-black/25 px-3 py-1 text-amber-50">{memberDisplayName(member)}</span>
-                          ))}
-                        </div>
-                      </div>
-                    ) : null}
-                  </div>
-                ) : (
-                  <div className="grid min-h-[520px] place-items-center rounded-[2rem] border border-dashed border-white/15 bg-black/10 p-8 text-center text-white/55">
-                    اختر قروب من القائمة.
-                  </div>
-                )}
-              </div>
-            </section>
-          </section>
-        ) : null}
-
-        {view === "missed" ? (
-          <section className="flex-1 py-8">
-            <div className="space-y-5">
-              <div className="rounded-[2rem] border border-white/10 bg-white/10 p-5 backdrop-blur sm:p-8">
-                <div className="mb-6 flex items-center justify-between gap-3">
-                  <div>
-                    <p className="text-sm font-semibold text-amber-300">التنبيهات</p>
-                    <h2 className="text-2xl font-black">الدعوات والتنبيهات الفائتة</h2>
-                  </div>
-                  <span className="rounded-full bg-amber-300 px-3 py-1 text-xs font-black text-slate-950">
-                    {notificationCount}
-                  </span>
-                </div>
-
-                {invitationCount === 0 ? (
-                  <div className="rounded-2xl border border-white/10 bg-black/15 p-4 text-sm text-white/55">
-                    ما عندك دعوات صداقة أو قروبات حالياً.
-                  </div>
-                ) : (
-                  <div className="grid gap-4 lg:grid-cols-2">
-                    <div className="rounded-2xl border border-emerald-300/20 bg-emerald-300/10 p-4">
-                      <h3 className="mb-3 font-black text-emerald-100">دعوات الأصدقاء {incomingRequests.length > 0 ? `(${incomingRequests.length})` : ""}</h3>
-                      {incomingRequests.length === 0 ? (
-                        <p className="text-sm text-white/50">ما فيه دعوات أصدقاء.</p>
-                      ) : (
-                        <div className="space-y-3">
-                          {incomingRequests.map((request) => (
-                            <div key={request.id} className="rounded-2xl bg-black/25 p-3">
-                              <p className="text-xs text-white/50">دعوة من</p>
-                              <p className="font-bold">{request.requester?.display_name || request.requester?.username || "مستخدم"}</p>
-                              <p className="text-sm text-emerald-300">@{request.requester?.username}</p>
-                              <input
-                                className="mt-3 w-full rounded-xl border border-white/10 bg-slate-950/70 px-3 py-2 text-sm text-white outline-none ring-emerald-300/50 focus:ring-4"
-                                value={acceptLabels[request.id] ?? ""}
-                                onChange={(event) => setAcceptLabels((labels) => ({ ...labels, [request.id]: event.target.value }))}
-                                placeholder={`سمّه عندك: ${request.requester?.display_name || request.requester?.username || "صديقي"}`}
-                                maxLength={40}
-                              />
-                              <div className="mt-3 grid grid-cols-2 gap-2">
-                                <button className={`${buttonClass()} py-2`} onClick={() => acceptFriendship(request)} disabled={busy}>قبول</button>
-                                <button className={`${buttonClass("danger")} py-2`} onClick={() => rejectFriendship(request)} disabled={busy}>رفض</button>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-
-                    <div className="rounded-2xl border border-sky-300/20 bg-sky-300/10 p-4">
-                      <h3 className="mb-3 font-black text-sky-100">دعوات القروبات {groupInvitations.length > 0 ? `(${groupInvitations.length})` : ""}</h3>
-                      {groupInvitations.length === 0 ? (
-                        <p className="text-sm text-white/50">ما فيه دعوات قروبات.</p>
-                      ) : (
-                        <div className="space-y-3">
-                          {groupInvitations.map((group) => (
-                            <div key={group.id} className="rounded-2xl bg-black/25 p-3">
-                              <p className="font-black">{group.name}</p>
-                              <p className="text-xs text-white/50">{group.members.length} أعضاء/مدعوين</p>
-                              <div className="mt-3 grid grid-cols-2 gap-2">
-                                <button className={`${buttonClass("primary")} py-2`} onClick={() => acceptGroupInvite(group)} disabled={busy} type="button">قبول</button>
-                                <button className={`${buttonClass("danger")} py-2`} onClick={() => rejectGroupInvite(group)} disabled={busy} type="button">رفض</button>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              <div className="rounded-[2rem] border border-white/10 bg-white/10 p-5 backdrop-blur sm:p-8">
-                <div className="mb-6 flex items-center justify-between gap-3">
-                  <h2 className="text-2xl font-black">تنبيهات فائتة</h2>
-                  <div className="flex items-center gap-2">
-                    {missedSignals.length > 0 ? (
-                      <button className={`${buttonClass("ghost")} py-2`} onClick={clearMissedSignals} disabled={busy}>
-                        مسح الكل
-                      </button>
-                    ) : null}
-                    <span className="rounded-full bg-white/10 px-3 py-1 text-xs font-black text-white/70">
-                      {missedSignals.length}
-                    </span>
-                  </div>
-                </div>
-                {missedSignals.length === 0 ? (
-                  <div className="grid min-h-[220px] place-items-center rounded-[2rem] border border-dashed border-white/15 bg-black/10 p-8 text-center text-white/55">
-                    ما فيه تنبيهات فائتة حالياً.
-                  </div>
-                ) : (
-                  <div className="space-y-3">
-                    {missedSignals.map((signal) => (
-                      <button
-                        key={signal.id}
-                        className="w-full rounded-2xl border border-amber-300/20 bg-amber-300/10 p-4 text-right transition hover:bg-amber-300/15"
-                        onClick={() => openMissedSignal(signal)}
-                      >
-                        <div className="flex items-center justify-between gap-3">
-                          <div>
-                            <p className="font-black">{senderNameForSignal(signal)}</p>
-                            <p className="text-xs text-white/50">{formatSignalDate(signal.created_at)}</p>
-                          </div>
-                          {isEmojiReply(signal.text) ? (
-                            <span className={`grid h-12 w-12 place-items-center rounded-2xl ${replyToneClass(signal.text)}`}>
-                              <ReplyStatusIcon text={signal.text} className="h-7 w-7" />
-                            </span>
-                          ) : (
-                            <span className="text-xl font-black text-emerald-200">{signal.text}</span>
-                          )}
-                        </div>
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-          </section>
-        ) : null}
-
-        {view === "settings" ? (
-          <section className="flex-1 py-8">
-            <div className="mb-5 rounded-[2rem] border border-white/10 bg-white/10 p-5 backdrop-blur sm:p-6">
-              <p className="text-sm font-semibold text-emerald-300">الإعدادات</p>
-              <h2 className="mt-1 text-3xl font-black">مركز التحكم</h2>
-              <p className="mt-2 text-sm leading-6 text-white/55">
-                هنا الإضافة والإنشاء وإعدادات الجهاز. الدعوات الجديدة صارت في صفحة التنبيهات.
-              </p>
-            </div>
-
-            <div className="grid gap-5 lg:grid-cols-2">
-              <div className="space-y-5">
-                <div className="rounded-[2rem] border border-white/10 bg-white/10 p-5 backdrop-blur">
-                  <h3 className="mb-2 text-xl font-black">الحساب</h3>
-                  <p className="text-sm text-white/60">داخل باسم</p>
-                  <h4 className="text-2xl font-black">{profile?.display_name || profile?.username}</h4>
-                  <p className="text-sm text-emerald-300">@{profile?.username}</p>
-                </div>
-
-                <div className="rounded-[2rem] border border-white/10 bg-white/10 p-5 backdrop-blur">
-                  <h3 className="mb-2 text-xl font-black">الأصدقاء والإضافة</h3>
-                  <p className="mb-4 text-sm leading-6 text-white/55">كودك وإضافة صديق جديد. دعوات الأصدقاء الواردة تلقاها في التنبيهات.</p>
-                  <InviteCodeCard inviteCode={profile?.invite_code} onCopy={() => void copyInviteCode()} />
-                  <div className="mt-4 rounded-2xl border border-white/10 bg-black/15 p-4">
-                    <h4 className="mb-3 font-black">إضافة شخص بالكود</h4>
-                    <AddFriendForm
-                      friendCode={friendCode}
-                      friendLabel={friendLabel}
-                      busy={busy}
-                      onSubmit={addFriend}
-                      onFriendCodeChange={setFriendCode}
-                      onFriendLabelChange={setFriendLabel}
-                    />
-                  </div>
-                  <div className="mt-4 rounded-2xl border border-white/10 bg-black/15 p-4">
-                    <h4 className="mb-3 font-black">طلبات مرسلة</h4>
-                    {outgoingRequests.length === 0 ? (
-                      <p className="text-sm text-white/50">ما فيه طلبات معلقة.</p>
-                    ) : (
-                      <div className="space-y-2 text-sm text-white/70">
-                        {outgoingRequests.map((request) => <p key={request.id}>بانتظار @{request.addressee?.username}</p>)}
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                <div className="rounded-[2rem] border border-white/10 bg-white/10 p-5 backdrop-blur">
-                  <h3 className="mb-2 text-xl font-black">القروبات</h3>
-                  <p className="mb-4 text-sm leading-6 text-white/55">إنشاء قروب جديد. دعوات القروبات الواردة تلقاها في التنبيهات.</p>
-                  <form className="rounded-2xl border border-white/10 bg-black/15 p-4" onSubmit={createGroup}>
-                    <h4 className="mb-3 font-black">إنشاء قروب</h4>
-                    <label className="block">
-                      <span className="mb-2 block text-sm text-white/70">عنوان القروب</span>
-                      <input className="w-full rounded-2xl border border-white/10 bg-slate-950/70 px-4 py-3 text-white outline-none ring-emerald-300/50 focus:ring-4" value={newGroupName} onChange={(event) => setNewGroupName(event.target.value)} placeholder="مثال: تصويت العشاء" maxLength={80} />
-                    </label>
-                    <div className="mt-4 max-h-60 space-y-2 overflow-auto pr-1">
-                      {friends.length === 0 ? <p className="text-sm text-white/50">أضف أصدقاء أولاً.</p> : friends.map((friend) => (
-                        <label key={friend.friendshipId} className={`flex cursor-pointer items-center justify-between gap-3 rounded-2xl border p-3 transition ${selectedGroupFriendIds.includes(friend.user.id) ? "border-emerald-300/60 bg-emerald-300/15" : "border-white/10 bg-black/20 hover:bg-black/30"}`}>
-                          <span>
-                            <span className="block font-black">{friend.label}</span>
-                            <span className="block text-xs text-emerald-300">@{friend.user.username}</span>
-                          </span>
-                          <input className="h-5 w-5 accent-emerald-300" type="checkbox" checked={selectedGroupFriendIds.includes(friend.user.id)} onChange={() => toggleGroupFriend(friend.user.id)} />
-                        </label>
-                      ))}
-                    </div>
-                    <button className={`${buttonClass()} mt-4 w-full`} disabled={busy || friends.length === 0}>إنشاء وإرسال الدعوات</button>
-                  </form>
-                </div>
-              </div>
-
-              <div className="space-y-5">
-                <div className="rounded-[2rem] border border-white/10 bg-white/10 p-5 backdrop-blur">
-                  <h3 className="mb-2 text-xl font-black">تنبيهات النظام</h3>
-                  <p className="mb-4 text-sm leading-6 text-white/55">فعلها عشان توصلك تنبيهات PWA من النظام حتى لو صفحة التطبيق مو مفتوحة.</p>
-                  <button className={`${buttonClass(pushEnabled ? "ghost" : "primary")} w-full`} onClick={enableSystemNotifications} disabled={busy}>
-                    {pushEnabled ? "تنبيهات النظام مفعلة على هذا الجهاز" : "تفعيل تنبيهات النظام"}
-                  </button>
-                  <button className={`${buttonClass("ghost")} mt-3 w-full`} onClick={testSystemNotifications} disabled={busy || !pushEnabled} type="button">اختبار تنبيه النظام</button>
-                  {!PUBLIC_VAPID_KEY ? <p className="mt-3 text-xs leading-5 text-amber-200">يحتاج إعداد VAPID في Vercel/Supabase قبل ما يشتغل على النسخة المنشورة.</p> : null}
-                </div>
-
-                <div className="rounded-[2rem] border border-white/10 bg-white/10 p-5 backdrop-blur">
-                  <h3 className="mb-2 text-xl font-black">صوت التنبيه</h3>
-                  <p className="mb-4 text-sm leading-6 text-white/55">اختر الصوت اللي تسمعه إذا وصلك تنبيه. الاختيار ينحفظ على هذا الجهاز.</p>
-                  <div className="space-y-2">
-                    {WAKE_SOUND_OPTIONS.map((option) => (
-                      <label key={option.id} className={`flex cursor-pointer items-start gap-3 rounded-2xl border p-3 transition ${wakeSound === option.id ? "border-emerald-300/60 bg-emerald-300/15" : "border-white/10 bg-black/20 hover:bg-black/30"}`}>
-                        <input className="mt-1 accent-emerald-300" type="radio" name="wake-sound" checked={wakeSound === option.id} onChange={() => changeWakeSound(option.id)} />
-                        <span><span className="block font-black">{option.label}</span><span className="block text-xs leading-5 text-white/55">{option.description}</span></span>
-                      </label>
-                    ))}
-                  </div>
-                  <button className={`${buttonClass("ghost")} mt-4 w-full`} type="button" onClick={() => playWakeSound()}>تجربة الصوت</button>
-                </div>
-
-                <div className="rounded-[2rem] border border-white/10 bg-white/10 p-5 backdrop-blur">
-                  <h3 className="mb-2 text-xl font-black">الشكل</h3>
-                  <p className="mb-4 text-sm leading-6 text-white/55">اختر لون الخلفية المناسب لك. الاختيار محفوظ على هذا الجهاز.</p>
-                  <div className="grid grid-cols-2 gap-2">
-                    {THEME_OPTIONS.map((option) => (
-                      <button key={option.id} className={`rounded-2xl border px-4 py-3 text-sm font-black transition ${theme === option.id ? "border-emerald-300 bg-emerald-300 text-slate-950" : "border-white/10 bg-black/20 text-white hover:bg-black/30"}`} type="button" onClick={() => changeTheme(option.id)}>
-                        {option.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="rounded-[2rem] border border-white/10 bg-white/10 p-5 backdrop-blur">
-                  <h3 className="mb-2 text-xl font-black">وضع الهدوء</h3>
-                  <p className="mb-4 text-sm leading-6 text-white/55">إذا فعلته، تنبيهات النظام والصوت توقف في الوقت المحدد، لكن التنبيه يبقى محفوظ في التنبيهات الفائتة.</p>
-                  <label className="mb-4 flex cursor-pointer items-center justify-between gap-3 rounded-2xl bg-black/20 p-4">
-                    <span><span className="block font-black">تفعيل الهدوء</span><span className="block text-xs text-white/50">{quietActive ? "مفعل الآن" : "غير نشط الآن"}</span></span>
-                    <input className="h-5 w-5 accent-emerald-300" type="checkbox" checked={quietEnabled} onChange={(event) => updateQuietHours({ enabled: event.target.checked })} />
-                  </label>
-                  <div className="grid grid-cols-2 gap-3">
-                    <label className="block"><span className="mb-2 block text-xs text-white/60">من</span><input className="w-full rounded-2xl border border-white/10 bg-slate-950/70 px-3 py-3 text-white outline-none ring-emerald-300/50 focus:ring-4" type="time" value={quietStart} onChange={(event) => updateQuietHours({ start: event.target.value })} /></label>
-                    <label className="block"><span className="mb-2 block text-xs text-white/60">إلى</span><input className="w-full rounded-2xl border border-white/10 bg-slate-950/70 px-3 py-3 text-white outline-none ring-emerald-300/50 focus:ring-4" type="time" value={quietEnd} onChange={(event) => updateQuietHours({ end: event.target.value })} /></label>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </section>
-        ) : null}
-
-
+        {!publicGroupOnly && view === "friends" ? renderFriendsView() : null}
+        {!publicGroupOnly && view === "groups" ? renderGroupsView() : null}
+        {!publicGroupOnly && view === "notifications" ? renderNotificationsView() : null}
+        {!publicGroupOnly && view === "settings" ? renderSettingsView() : null}
       </div>
     </main>
   );
+
+  function renderAuthCard() {
+    return (
+      <div className="w-full max-w-md rounded-[2rem] border border-white/10 bg-white/10 p-6 shadow-2xl backdrop-blur">
+        <div className="mb-6 flex rounded-2xl bg-black/20 p-1">
+          <button className={`flex-1 rounded-xl px-4 py-3 text-sm font-bold transition ${mode === "login" ? "bg-emerald-300 text-slate-950" : "text-white/70"}`} onClick={() => setMode("login")} type="button">دخول</button>
+          <button className={`flex-1 rounded-xl px-4 py-3 text-sm font-bold transition ${mode === "signup" ? "bg-emerald-300 text-slate-950" : "text-white/70"}`} onClick={() => setMode("signup")} type="button">حساب جديد</button>
+        </div>
+        <form className="space-y-4" onSubmit={handleAuth}>
+          <label className="block"><span className="mb-2 block text-sm text-white/70">اسم المستخدم</span><input className="w-full rounded-2xl border border-white/10 bg-slate-950/70 px-4 py-3 text-white outline-none ring-emerald-300/50 focus:ring-4" value={username} onChange={(event) => setUsername(event.target.value)} placeholder="مثال: borashid" autoComplete="username" /></label>
+          {mode === "signup" ? <label className="block"><span className="mb-2 block text-sm text-white/70">الاسم الظاهر اختياري</span><input className="w-full rounded-2xl border border-white/10 bg-slate-950/70 px-4 py-3 text-white outline-none ring-emerald-300/50 focus:ring-4" value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="مثال: بوراشد" /></label> : null}
+          <label className="block"><span className="mb-2 block text-sm text-white/70">كلمة المرور</span><input className="w-full rounded-2xl border border-white/10 bg-slate-950/70 px-4 py-3 text-white outline-none ring-emerald-300/50 focus:ring-4" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="••••••••" type="password" autoComplete={mode === "login" ? "current-password" : "new-password"} /></label>
+          <button className={`${buttonClass()} w-full`} disabled={busy}>{busy ? "انتظر..." : mode === "login" ? "دخول" : "إنشاء الحساب"}</button>
+        </form>
+      </div>
+    );
+  }
+
+  function renderFriendsView() {
+    return (
+      <section className="flex-1 py-8">
+        <div className={cardClass()}>
+          <div className="mb-6 flex items-center justify-between"><h2 className="text-2xl font-black">الأصدقاء</h2><span className="rounded-full bg-white/10 px-3 py-1 text-xs font-black text-white/70">{friends.length}</span></div>
+          {friends.length === 0 ? <div className="rounded-2xl border border-dashed border-white/15 bg-black/10 p-8 text-center text-white/55">ما عندك أصدقاء. أضفهم بالكود من الإعدادات.</div> : (
+            <div className="space-y-2">
+              {friends.map((friend) => {
+                const expanded = expandedFriendId === friend.friendshipId;
+                return <div key={friend.friendshipId} className={`rounded-2xl border ${expanded ? "border-emerald-300/50 bg-slate-950/80" : "border-white/10 bg-slate-950/55"}`}>
+                  <button className="flex w-full items-center justify-between gap-3 px-4 py-3 text-right" onClick={() => setExpandedFriendId(expanded ? null : friend.friendshipId)} type="button"><span><b className="block text-lg">{friend.label}</b><span className="text-xs text-emerald-300">@{friend.user.username}</span></span><span className="grid h-8 w-8 place-items-center rounded-xl bg-white/10 text-lg">{expanded ? "−" : "+"}</span></button>
+                  {expanded ? <div className="border-t border-white/10 p-4"><div className="grid gap-3 sm:grid-cols-[1fr_auto]"><input className="rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none" value={friendLabelEdits[friend.friendshipId] ?? friend.label} onChange={(event) => setFriendLabelEdits((rows) => ({ ...rows, [friend.friendshipId]: event.target.value }))} /><div className="flex gap-2"><button className={`${buttonClass("primary")} py-2`} onClick={() => saveFriendLabel(friend)} disabled={busy}>حفظ</button><button className={`${buttonClass("danger")} py-2`} onClick={() => deleteFriend(friend)} disabled={busy}>حذف</button></div></div></div> : null}
+                </div>;
+              })}
+            </div>
+          )}
+        </div>
+      </section>
+    );
+  }
+
+  function renderGroupsView() {
+    return (
+      <section className="flex-1 py-8">
+        <div className="grid gap-5 lg:grid-cols-[0.85fr_1.15fr]">
+          <div className={cardClass()}>
+            <div className="mb-4 flex items-center justify-between"><h2 className="text-2xl font-black">قروباتك</h2><button className={buttonClass("ghost")} onClick={() => setView("settings")} type="button">إنشاء قروب</button></div>
+            {activeGroups.length === 0 ? <div className="rounded-2xl border border-dashed border-white/15 bg-black/10 p-6 text-center text-sm text-white/55">ما عندك قروبات نشطة.</div> : <div className="space-y-3">{activeGroups.map((group) => <button key={group.id} className={`w-full rounded-2xl border p-4 text-right transition ${selectedGroup?.id === group.id ? "border-emerald-300/60 bg-emerald-300/15" : "border-white/10 bg-slate-950/60 hover:border-emerald-300/40"}`} onClick={() => setSelectedGroup(group)} type="button"><div className="flex items-center justify-between gap-2"><b>{group.name}</b><span className="rounded-full bg-white/10 px-2 py-1 text-xs">{group.group_type === "qutiyyah" ? "قطيّة" : "ترتيب"}</span></div><p className="mt-1 text-xs text-white/50">{groupMembers(group).length} أعضاء · {group.visibility === "public" ? "عام" : "خاص"}</p></button>)}</div>}
+          </div>
+          <div>{selectedGroup ? renderGroupCard(selectedGroup) : <div className={cardClass("grid min-h-[420px] place-items-center text-center text-white/55")}>اختر قروب من القائمة.</div>}</div>
+        </div>
+      </section>
+    );
+  }
+
+  function renderNotificationsView() {
+    return (
+      <section className="flex-1 py-8"><div className="space-y-5">
+        <div className={cardClass()}><h2 className="mb-4 text-2xl font-black">دعوات الأصدقاء</h2>{incomingRequests.length === 0 ? <p className="text-sm text-white/50">ما فيه دعوات أصدقاء.</p> : <div className="grid gap-3 md:grid-cols-2">{incomingRequests.map((request) => <div key={request.id} className="rounded-2xl bg-black/20 p-4"><p className="text-xs text-white/50">دعوة من</p><p className="font-bold">{request.requester?.display_name || request.requester?.username || "مستخدم"}</p><p className="text-sm text-emerald-300">@{request.requester?.username}</p><input className="mt-3 w-full rounded-xl border border-white/10 bg-slate-950/70 px-3 py-2 text-sm text-white outline-none" value={acceptLabels[request.id] ?? ""} onChange={(event) => setAcceptLabels((rows) => ({ ...rows, [request.id]: event.target.value }))} placeholder="الاسم اللي بيظهر عندك" /><div className="mt-3 grid grid-cols-2 gap-2"><button className={`${buttonClass()} py-2`} onClick={() => acceptFriendship(request)} disabled={busy}>قبول</button><button className={`${buttonClass("danger")} py-2`} onClick={() => rejectFriendship(request)} disabled={busy}>رفض</button></div></div>)}</div>}</div>
+        <div className={cardClass()}><h2 className="mb-4 text-2xl font-black">دعوات القروبات</h2>{groupInvitations.length === 0 ? <p className="text-sm text-white/50">ما فيه دعوات قروبات.</p> : <div className="grid gap-3 md:grid-cols-2">{groupInvitations.map((group) => <div key={group.id} className="rounded-2xl bg-black/20 p-4"><p className="font-black">{group.name}</p><p className="text-xs text-white/50">{group.group_type === "qutiyyah" ? "قطيّة" : "ترتيب"}</p><div className="mt-3 grid grid-cols-2 gap-2"><button className={`${buttonClass("primary")} py-2`} onClick={() => acceptGroupInvite(group)} disabled={busy} type="button">قبول</button><button className={`${buttonClass("danger")} py-2`} onClick={() => rejectGroupInvite(group)} disabled={busy} type="button">رفض</button></div></div>)}</div>}</div>
+        <div className={cardClass()}><h2 className="mb-4 text-2xl font-black">طلبات الانضمام لقروباتك</h2>{pendingJoinRequests.length === 0 ? <p className="text-sm text-white/50">ما فيه طلبات انضمام.</p> : <div className="grid gap-3 md:grid-cols-2">{pendingJoinRequests.map((request) => <div key={request.id} className="rounded-2xl bg-black/20 p-4"><p className="text-xs text-white/50">طلب دخول إلى {request.group.name}</p><p className="font-bold">{request.requester?.display_name || request.requester?.username || "مستخدم"}</p><p className="text-sm text-emerald-300">@{request.requester?.username}</p><div className="mt-3 grid grid-cols-2 gap-2"><button className={`${buttonClass("primary")} py-2`} onClick={() => decideJoinRequest(request, true)} disabled={busy} type="button">قبول</button><button className={`${buttonClass("danger")} py-2`} onClick={() => decideJoinRequest(request, false)} disabled={busy} type="button">رفض</button></div></div>)}</div>}</div>
+      </div></section>
+    );
+  }
+
+  function renderSettingsView() {
+    return (
+      <section className="flex-1 py-8"><div className="grid gap-5 lg:grid-cols-2">
+        <div className="space-y-5">
+          <div className={cardClass()}><h3 className="mb-2 text-xl font-black">الحساب</h3><p className="text-sm text-white/60">داخل باسم</p><h4 className="text-2xl font-black">{profile?.display_name || profile?.username}</h4><p className="text-sm text-emerald-300">@{profile?.username}</p></div>
+          <div className={cardClass()}><h3 className="mb-2 text-xl font-black">الأصدقاء والإضافة</h3><p className="mb-4 text-sm text-white/55">كودك وإضافة صديق جديد.</p><div className="rounded-3xl border border-emerald-300/20 bg-emerald-300/10 p-4"><p className="text-xs text-white/60">كود الإضافة الخاص فيك</p><button className="mt-2 w-full rounded-xl bg-slate-950/70 px-4 py-3 font-mono text-2xl font-black tracking-[0.35em] text-emerald-200" onClick={async () => { if (profile?.invite_code) { await navigator.clipboard?.writeText(profile.invite_code); notify("تم نسخ كود الإضافة."); } }} type="button">{profile?.invite_code || "--------"}</button></div><form className="mt-4 rounded-2xl border border-white/10 bg-black/15 p-4" onSubmit={addFriend}><input className="mb-3 w-full rounded-2xl border border-white/10 bg-slate-950/70 px-4 py-3 font-mono text-lg tracking-[0.25em] text-white outline-none" value={friendCode} onChange={(event) => setFriendCode(event.target.value.toUpperCase())} placeholder="كود الصديق" maxLength={8} dir="ltr" /><input className="mb-3 w-full rounded-2xl border border-white/10 bg-slate-950/70 px-4 py-3 text-white outline-none" value={friendLabel} onChange={(event) => setFriendLabel(event.target.value)} placeholder="الاسم عندك" maxLength={40} /><button className={`${buttonClass()} w-full`} disabled={busy}>إرسال طلب</button></form>{outgoingRequests.length > 0 ? <div className="mt-4 rounded-2xl bg-black/15 p-4"><h4 className="mb-2 font-black">طلبات مرسلة</h4>{outgoingRequests.map((request) => <p key={request.id} className="text-sm text-white/70">بانتظار @{request.addressee?.username}</p>)}</div> : null}</div>
+        </div>
+        <div className={cardClass()}><h3 className="mb-2 text-xl font-black">إنشاء قروب</h3><p className="mb-4 text-sm text-white/55">قروب ترتيب أو قطيّة مع رابط مشاركة.</p><form className="space-y-3" onSubmit={createGroup}><div className="grid grid-cols-2 gap-2"><button className={buttonClass(newGroupType === "arrangement" ? "primary" : "ghost")} onClick={() => setNewGroupType("arrangement")} type="button">ترتيب</button><button className={buttonClass(newGroupType === "qutiyyah" ? "primary" : "ghost")} onClick={() => setNewGroupType("qutiyyah")} type="button">قطيّة</button></div><input className="w-full rounded-2xl border border-white/10 bg-slate-950/70 px-4 py-3 text-white outline-none" value={newGroupName} onChange={(event) => setNewGroupName(event.target.value)} placeholder="اسم القروب" maxLength={80} /><textarea className="min-h-24 w-full rounded-2xl border border-white/10 bg-slate-950/70 px-4 py-3 text-white outline-none" value={newGroupDescription} onChange={(event) => setNewGroupDescription(event.target.value)} placeholder="تفاصيل القروب" /><div className="grid grid-cols-2 gap-2"><input className="rounded-2xl border border-white/10 bg-slate-950/70 px-4 py-3 text-white outline-none" type="date" value={newGroupDate} onChange={(event) => setNewGroupDate(event.target.value)} /><input className="rounded-2xl border border-white/10 bg-slate-950/70 px-4 py-3 text-white outline-none" type="time" value={newGroupTime} onChange={(event) => setNewGroupTime(event.target.value)} /></div><input className="w-full rounded-2xl border border-white/10 bg-slate-950/70 px-4 py-3 text-white outline-none" value={newGroupLocation} onChange={(event) => setNewGroupLocation(event.target.value)} placeholder="المكان اختياري" /><input className="w-full rounded-2xl border border-white/10 bg-slate-950/70 px-4 py-3 text-white outline-none" value={newGroupLocationUrl} onChange={(event) => setNewGroupLocationUrl(event.target.value)} placeholder="رابط الموقع اختياري" dir="ltr" /><div className="grid grid-cols-2 gap-2"><button className={buttonClass(newGroupVisibility === "private" ? "primary" : "ghost")} onClick={() => setNewGroupVisibility("private")} type="button">خاص</button><button className={buttonClass(newGroupVisibility === "public" ? "primary" : "ghost")} onClick={() => setNewGroupVisibility("public")} type="button">عام</button></div>{newGroupVisibility === "public" ? <label className="flex items-center justify-between rounded-2xl bg-black/20 p-4"><span className="font-bold">السماح بطلبات الانضمام</span><input className="h-5 w-5 accent-emerald-300" type="checkbox" checked={allowJoinRequests} onChange={(event) => setAllowJoinRequests(event.target.checked)} /></label> : null}{newGroupType === "qutiyyah" ? <div className="rounded-2xl border border-amber-300/20 bg-amber-300/10 p-4"><input className="mb-3 w-full rounded-2xl border border-white/10 bg-slate-950/70 px-4 py-3 text-white outline-none" value={newTotalAmount} onChange={(event) => setNewTotalAmount(event.target.value)} placeholder="المبلغ الإجمالي اختياري" inputMode="decimal" /><label className="flex items-center justify-between"><span className="font-bold">تقسيم تلقائي على الأعضاء</span><input className="h-5 w-5 accent-amber-300" type="checkbox" checked={autoSplitAmount} onChange={(event) => setAutoSplitAmount(event.target.checked)} /></label></div> : null}<div className="max-h-56 space-y-2 overflow-auto rounded-2xl border border-white/10 bg-black/15 p-3">{friends.length === 0 ? <p className="text-sm text-white/50">أضف أصدقاء أولاً لو تبي تدعوهم.</p> : friends.map((friend) => <label key={friend.friendshipId} className={`flex cursor-pointer items-center justify-between gap-3 rounded-2xl border p-3 ${selectedGroupFriendIds.includes(friend.user.id) ? "border-emerald-300/60 bg-emerald-300/15" : "border-white/10 bg-black/20"}`}><span><b className="block">{friend.label}</b><span className="text-xs text-emerald-300">@{friend.user.username}</span></span><input className="h-5 w-5 accent-emerald-300" type="checkbox" checked={selectedGroupFriendIds.includes(friend.user.id)} onChange={() => toggleGroupFriend(friend.user.id)} /></label>)}</div><button className={`${buttonClass()} w-full`} disabled={busy}>إنشاء القروب</button></form></div>
+      </div></section>
+    );
+  }
 }

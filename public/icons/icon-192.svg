@@ -1,8 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="192" height="192" viewBox="0 0 192 192" role="img" aria-label="Sa7i icon">
+<svg xmlns="http://www.w3.org/2000/svg" width="192" height="192" viewBox="0 0 192 192" role="img" aria-label="شالترتيب icon">
   <rect width="192" height="192" rx="44" fill="#020617"/>
-  <circle cx="96" cy="96" r="68" fill="#34d399" opacity="0.95"/>
-  <path d="M62 104c9 18 21 27 36 27 16 0 29-9 38-27" fill="none" stroke="#020617" stroke-width="12" stroke-linecap="round"/>
-  <circle cx="73" cy="78" r="9" fill="#020617"/>
-  <circle cx="119" cy="78" r="9" fill="#020617"/>
-  <path d="M96 34v16M96 142v16M34 96h16M142 96h16" stroke="#34d399" stroke-width="10" stroke-linecap="round"/>
+  <circle cx="96" cy="96" r="68" fill="#0f766e" opacity="0.35"/>
+  <path d="M54 72h84M54 98h84M54 124h54" stroke="#6ee7b7" stroke-width="13" stroke-linecap="round"/>
+  <path d="M128 119l12 12 26-30" stroke="#fcd34d" stroke-width="11" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
 </svg>

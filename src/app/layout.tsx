@@ -9,12 +9,12 @@ const tajawal = Tajawal({
 });
 
 export const metadata: Metadata = {
-  title: "Sa7i | صاحي",
-  description: "تنبيه بسيط بين شخصين بزر واحد.",
+  title: "شالترتيب!؟",
+  description: "تنظيم القروبات والمواعيد والقطيّات بدون شات.",
   manifest: "/manifest.webmanifest",
   appleWebApp: {
     capable: true,
-    title: "Sa7i",
+    title: "شالترتيب!؟",
     statusBarStyle: "black-translucent",
   },
 };

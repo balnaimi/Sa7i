@@ -1,8 +1,25 @@
 # Changelog
 
-All notable changes to Sa7i are documented here.
+All notable changes to شالترتيب!؟ are documented here.
 
-Sa7i follows semantic versioning: `MAJOR.MINOR.PATCH`.
+شالترتيب!؟ follows semantic versioning: `MAJOR.MINOR.PATCH`.
+
+## [0.6.0] - 2026-06-25
+
+### Changed
+- Rebranded the app from Sa7i / صاحي to شالترتيب!؟.
+- Rebuilt the product around group arrangements and qutiyyah contribution tracking instead of wake-signal notifications.
+- Friends are now only for adding people to groups; friend names remain private to the current user.
+- Group admins can rename members inside a group, and that group-specific name is visible to all group members.
+
+### Added
+- Arrangement groups with per-member `صح` / `لا` / `بدون قرار` status and notes.
+- Qutiyyah groups with total amount, optional automatic split, per-member due/paid amounts, and qutiyyah manager role.
+- Public/private group visibility, public share links, and optional join requests for public groups.
+- Group details fields: description, date, time, location, and location URL.
+
+### Removed
+- Wake-signal button flow, missed alerts, quick replies, notification sounds, quiet hours, mute settings, and PWA push-notification setup from the user-facing app.
 
 ## [0.5.1] - 2026-06-25
 
